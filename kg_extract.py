@@ -129,8 +129,16 @@ def get_entity_head(span, entities):
     return find_entity_for_span(span, entities)
 
 
-def extract_entities_with_spacy(text, nlp):
-    """Stage 1: Enhanced entity and relationship extraction with spaCy"""
+def extract_entities_with_spacy(text):
+    """
+    Stage 1: Enhanced entity and relationship extraction with spaCy
+    
+    Improvements:
+    - Filters out non-relational entity types (dates, numbers, etc.)
+    - Basic pronoun resolution
+    - Better subject/object identification
+    """
+    
     doc = nlp(text)
     
     # Extract entities
@@ -143,13 +151,25 @@ def extract_entities_with_spacy(text, nlp):
             "end": ent.end_char,
         })
     
-    # Extract relationships
+    # Extract relationships using dependency parsing
     relationships = []
+    
+    # Transaction verbs of interest (lemmatized forms)
     transaction_verbs = {
         'sell', 'buy', 'acquire', 'purchase', 'transfer', 'export', 'import', 
         'smuggle', 'consign', 'operate', 'deal', 'trade', 'traffic', 'supply',
         'provide', 'convict', 'charge', 'sentence', 'arrest', 'raid', 'open',
-        'close', 'found', 'establish', 'meet', 'return', 'transport'
+        'close', 'found', 'establish', 'meet', 'return', 'transport', 'loot', 'steal',
+        'excavate', 'discover', 'authenticate', 'appraise', 'restore', 'catalog',
+        'donate', 'bequeath', 'inherit', 'commission', 'forge', 'falsify',
+        'seize', 'confiscate', 'repatriate', 'extradite', 'investigate',
+        'testify', 'collaborate', 'facilitate', 'broker', 'negotiate',
+        'obtain', 'procure', 'offer', 'give', 'hand', 'plunder', 'rob',
+        'ship', 'arrange', 'coordinate', 'enable', 'work', 'employ', 'hire',
+        'affiliate', 'create', 'start', 'launch', 'run', 'manage', 'oversee',
+        'control', 'indict', 'accuse', 'prosecute', 'probe', 'examine', 'inspect',
+        'verify', 'certify', 'validate', 'confirm', 'unearth', 'partner', 'cooperate',
+        'associate'
     }
     
     for token in doc:
@@ -159,29 +179,40 @@ def extract_entities_with_spacy(text, nlp):
         
         subject = None
         obj = None
-        prep_obj = None
+        prep_obj = None  # for prepositional objects
         
+        # Extract subject and objects from dependencies
         for child in token.children:
+            # Subject (active or passive)
             if child.dep_ in ['nsubj', 'nsubjpass']:
                 subject = child
+            
+            # Direct object
             elif child.dep_ in ['dobj', 'obj']:
                 obj = child
+            
+            # Prepositional phrases ("sold to X", "bought from Y")
             elif child.dep_ == 'prep':
+                # Find the object of the preposition
                 for pchild in child.children:
                     if pchild.dep_ == 'pobj':
                         prep_obj = pchild
                         break
+            
+            # Dative ("gave him", "told her")
             elif child.dep_ == 'dative':
-                if not obj:
+                if not obj:  # Use dative as object if no direct object
                     obj = child
         
+        # Try to create relationships
         relationships_to_add = []
         
+        # Subject -> Object relationship
         if subject and obj:
-            subj_entity = get_entity_head(subject, entities)
-            obj_entity = get_entity_head(obj, entities)
+            subj_entity = get_entity_head(subject, entities, doc)
+            obj_entity = get_entity_head(obj, entities, doc)
             
-            if subj_entity and obj_entity:
+            if subj_entity and obj_entity and subj_entity != obj_entity:
                 relationships_to_add.append({
                     'verb': token.text,
                     'lemma': lemma,
@@ -190,11 +221,12 @@ def extract_entities_with_spacy(text, nlp):
                     'pattern': 'subj-verb-obj'
                 })
         
+        # Subject -> Prepositional Object relationship
         if subject and prep_obj:
-            subj_entity = get_entity_head(subject, entities)
-            prep_obj_entity = get_entity_head(prep_obj, entities)
+            subj_entity = get_entity_head(subject, entities, doc)
+            prep_obj_entity = get_entity_head(prep_obj, entities, doc)
             
-            if subj_entity and prep_obj_entity:
+            if subj_entity and prep_obj_entity and subj_entity != prep_obj_entity:
                 relationships_to_add.append({
                     'verb': token.text,
                     'lemma': lemma,
@@ -203,33 +235,36 @@ def extract_entities_with_spacy(text, nlp):
                     'pattern': 'subj-verb-prep-obj'
                 })
         
+        # Object -> Prepositional Object relationship (passive constructions)
         if obj and prep_obj and not subject:
-            obj_entity = get_entity_head(obj, entities)
-            prep_obj_entity = get_entity_head(prep_obj, entities)
+            obj_entity = get_entity_head(obj, entities, doc)
+            prep_obj_entity = get_entity_head(prep_obj, entities, doc)
             
-            if obj_entity and prep_obj_entity:
+            if obj_entity and prep_obj_entity and obj_entity != prep_obj_entity:
                 relationships_to_add.append({
                     'verb': token.text,
                     'lemma': lemma,
                     'subject': obj_entity,
                     'object': prep_obj_entity,
-                    'pattern': 'obj-verb-prep-obj'
+                    'pattern': 'passive-obj-verb-prep-obj'
                 })
         
         relationships.extend(relationships_to_add)
     
-    # Deduplicate
-    unique_rels = []
+    # Remove duplicate relationships
     seen = set()
+    unique_relationships = []
     for rel in relationships:
         key = (rel['subject'], rel['lemma'], rel['object'])
         if key not in seen:
             seen.add(key)
-            unique_rels.append(rel)
+            unique_relationships.append(rel)
+    
+    print(f"✅ spaCy extracted {len(entities)} entities and {len(unique_relationships)} relationships")
     
     return {
         "entities": entities,
-        "relationships": unique_rels,
+        "relationships": unique_relationships,
         "text": text
     }
 
@@ -241,14 +276,134 @@ You are given entities and relationships extracted by spaCy from an antiquities 
 Your task is to:
 
 1. **Resolve Coreferences**: Identify which entity mentions refer to the same real-world entity
-2. **Canonicalize**: Assign canonical IDs (e.g., "giacomo_medici", "j_paul_getty_museum")
-3. **Classify**: Map spaCy labels to domain-specific types
-4. **Enhance Relationships**: Link to canonical entity IDs, extract dates, amounts
-5. **Add Context**: Include roles, dates, legal status when available
+2. **Ignore scholarly harvard-type in-text references**
+3. **Canonicalize**: Assign canonical IDs (e.g., "giacomo_medici", "j_paul_getty_museum")
+4. **Classify**: Map spaCy labels to domain-specific types:
+   - PERSON → role (dealer, collector, official, looter)
+   - ORGANIZATION → type (museum, gallery, auction_house, law_enforcement)
+   - GPE/LOC → LOCATION with significance
+   - WORK_OF_ART/PRODUCT → ARTIFACT with object_type
+5. **Enhance Relationships**: Map verbs to canonical relationship types (see below)
+6. **Add Context**: Include roles, dates, legal status when available
+
+## Entity Type Rules
+
+1. **PERSON**: Individuals (dealers, collectors, officials, looters)
+   - canonical_id: firstname_lastname (lowercase, underscores)
+   - Add full_name when known
+   - Include role attribute
+
+2. **ORGANIZATION**: Institutions
+   - canonical_id (e.g., j_paul_getty_museum)
+   - Add entity_type (museum, gallery, auction_house, law_enforcement)
+
+3. **ARTIFACT**: Cultural objects
+   - canonical_id (e.g., euphronios_sarpedon_krater)
+   - Add object_type, condition, legal_status
+
+4. **LOCATION**: Geographic places
+   - canonical_id (e.g., geneva_freeport)
+   - Add location_type and significance
+
+## Canonical Relationship Types
+
+**CRITICAL**: You MUST map every relationship to ONE of these 15 canonical types.
+Store the original verb in the 'original_verb' attribute.
+
+### Transaction Relations (Legal/Market Activity)
+- **SOLD_TO**: Legal or illegal sales, supplies, provisions
+  - Original verbs: sell, sold, supply, provide, offer
+  
+- **PURCHASED_FROM**: Acquisitions, buying
+  - Original verbs: buy, purchase, acquire, obtain, procure
+  
+- **TRANSFERRED_TO**: General transfers, gifts, consignments
+  - Original verbs: transfer, consign, donate, bequeath, give, hand over
+
+### Illegal Activity Relations
+- **SMUGGLED_TO**: Illegal transportation across borders
+  - Original verbs: smuggle, traffic, transport (illegally), ship (illegally)
+  
+- **LOOTED_FROM**: Theft, illegal excavation, plundering
+  - Original verbs: loot, steal, plunder, excavate (illegally), rob
+  
+- **FACILITATED**: Intermediary role, brokering, enabling
+  - Original verbs: broker, facilitate, negotiate, arrange, coordinate, enable
+
+### Institutional Relations
+- **EMPLOYED_BY**: Employment, affiliation, work relationship
+  - Original verbs: work for, employ, hire, affiliate with
+  
+- **FOUNDED**: Organization creation, establishment
+  - Original verbs: found, establish, create, start, open, launch
+  
+- **OPERATED**: Business operations, management, running
+  - Original verbs: operate, run, manage, oversee, control
+
+### Legal/Law Enforcement Relations
+- **CHARGED_WITH**: Legal accusations, indictments
+  - Original verbs: charge, indict, accuse, prosecute
+  
+- **CONVICTED_OF**: Legal convictions, sentencing
+  - Original verbs: convict, sentence, find guilty
+  
+- **INVESTIGATED_BY**: Investigations, raids, searches
+  - Original verbs: investigate, raid, search, probe, examine, inspect
+
+### Provenance Relations
+- **AUTHENTICATED**: Verification, certification, validation
+  - Original verbs: authenticate, verify, certify, validate, confirm, appraise
+  
+- **DISCOVERED_AT**: Finding locations, excavation sites
+  - Original verbs: discover, find, excavate (legally), unearth
+  
+- **REPATRIATED_TO**: Returns, restitution, restoration
+  - Original verbs: repatriate, return, restore, give back
+
+### Social Relations
+- **COLLABORATED_WITH**: Professional partnerships, joint activities
+  - Original verbs: collaborate, partner, work with, cooperate, associate
+
+## Relationship Enhancement Rules
+
+For EACH relationship extracted by spaCy:
+
+1. **Map to Canonical Type**: Choose ONE type from the 15 above
+2. **Preserve Original Verb**: Store in attributes.original_verb
+3. **Add Temporal Data**: Include dates if mentioned (year, date range, period)
+4. **Add Context**: Include any mentioned objects, amounts, locations, legality
+5. **Link to Canonical IDs**: Use entity canonical_ids, not original text
+
+SUBJECT_CORRECTION_HINT
+CRITICAL: Check relationship subjects carefully!
+- If a pronoun subject (he/she/they) appears, trace it back to the actual person
+- Example: "Getty bought from tombaroli" is WRONG if the text says "he bought" 
+  and "he" refers to Medici earlier in context
+- Read the full document context to verify subjects
+
+CRITICAL PREDICATE RULES:
+
+1. ONLY use these 15 types - DO NOT invent new ones:
+   SOLD_TO, PURCHASED_FROM, TRANSFERRED_TO, SMUGGLED_TO, LOOTED_FROM, 
+   FACILITATED, EMPLOYED_BY, FOUNDED, OPERATED, CHARGED_WITH, 
+   CONVICTED_OF, INVESTIGATED_BY, AUTHENTICATED, DISCOVERED_AT, 
+   REPATRIATED_TO, COLLABORATED_WITH
+
+2. Passive voice direction rules:
+   - "X investigated BY Y" → X --[INVESTIGATED_BY]--> Y (X is target, Y is agent)
+   - "X charged BY Y" → X --[CHARGED_WITH]--> Y
+   - "X convicted BY Y" → X --[CONVICTED_OF]--> Y
+   - Think: "Who is performing the action?" = target
+
+3. If you can't map cleanly to a canonical type, skip the relationship.
+
+4. For storage/location, use attributes, not relationships:
+   Instead of: X --[STORED_AT]--> Y
+   Use: X with attributes: {"storage_location": "Y"}
 
 ## Output Format
 
-Return JSON with two sections:
+Return ONLY valid JSON with two sections:
 
 ```json
 {
@@ -257,10 +412,34 @@ Return JSON with two sections:
       "canonical_id": "giacomo_medici",
       "full_name": "Giacomo Medici",
       "type": "PERSON",
-      "mentions": ["Giacomo Medici", "Medici"],
+      "mentions": ["Giacomo Medici", "Medici", "G. Medici"],
       "attributes": {
         "role": "dealer",
-        "nationality": "Italian"
+        "nationality": "Italian",
+        "status": "convicted"
+      }
+    },
+    {
+      "canonical_id": "j_paul_getty_museum",
+      "full_name": "The J. Paul Getty Museum",
+      "type": "ORGANIZATION",
+      "mentions": ["The J. Paul Getty Museum", "Getty Museum", "Getty"],
+      "attributes": {
+        "entity_type": "museum",
+        "location": "Los Angeles",
+        "country": "USA"
+      }
+    },
+    {
+      "canonical_id": "euphronios_krater",
+      "full_name": "Euphronios Sarpedon Krater",
+      "type": "ARTIFACT",
+      "mentions": ["krater", "Euphronios krater", "Sarpedon krater"],
+      "attributes": {
+        "object_type": "ceramic vessel",
+        "period": "515 BCE",
+        "origin": "Etruscan",
+        "legal_status": "repatriated"
       }
     }
   ],
@@ -268,14 +447,63 @@ Return JSON with two sections:
     {
       "source_id": "giacomo_medici",
       "target_id": "robert_hecht",
-      "relation_type": "sold_to",
+      "relation_type": "SOLD_TO",
       "attributes": {
-        "date": "1967"
+        "original_verb": "supplied",
+        "date": "1971-1973",
+        "object": "looted artifacts",
+        "legality": "illegal",
+        "quantity": "multiple items"
+      }
+    },
+    {
+      "source_id": "j_paul_getty_museum",
+      "target_id": "hydra_gallery",
+      "relation_type": "PURCHASED_FROM",
+      "attributes": {
+        "original_verb": "acquired",
+        "date": "1972",
+        "object": "Euphronios krater",
+        "price": "$1 million",
+        "legality": "disputed"
+      }
+    },
+    {
+      "source_id": "italian_police",
+      "target_id": "giacomo_medici",
+      "relation_type": "INVESTIGATED_BY",
+      "attributes": {
+        "original_verb": "raided",
+        "date": "1995",
+        "location": "Geneva Freeport",
+        "outcome": "evidence seized"
+      }
+    },
+    {
+      "source_id": "giacomo_medici",
+      "target_id": "italy",
+      "relation_type": "CONVICTED_OF",
+      "attributes": {
+        "original_verb": "sentenced",
+        "date": "2004",
+        "charge": "conspiracy to traffic looted antiquities",
+        "sentence": "10 years imprisonment"
       }
     }
   ]
 }
 ```
+
+## Quality Checklist
+
+Before returning your JSON, verify:
+- ✅ Every relationship uses ONE of the 15 canonical relation_type values
+- ✅ Original verbs are preserved in attributes.original_verb
+- ✅ Entity canonical_ids are lowercase with underscores
+- ✅ All entities referenced in relationships exist in entities array
+- ✅ Temporal data is extracted when available
+- ✅ JSON is valid (no trailing commas, proper quotes)
+- ✅ Coreferences are resolved (same entity = same canonical_id)
 """
 
 
