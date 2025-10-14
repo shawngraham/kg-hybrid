@@ -1,20 +1,10 @@
-"""
-DSPy-based Optimization Framework for Hybrid Knowledge Graph Extraction
-
-This script optimizes the LLM-based refinement stage using DSPy with multiple local models.
-"""
-
 import dspy
+import spacy
 import json
 import re
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
-from pathlib import Path
-import spacy
 import requests
-from collections import defaultdict
-import pandas as pd
-
+from typing import List, Dict, Any
+from dataclasses import dataclass
 
 # ============================================================================
 # Configuration
@@ -26,18 +16,17 @@ class LocalLLMConfig:
     name: str
     api_url: str = "http://localhost:1337/v1/chat/completions"
     api_key: str = ""
-    max_tokens: int = 4096
+    max_tokens: int = 8192
     temperature: float = 0.1
-    
+        
     def __str__(self):
         return self.name
-
 
 def load_models_from_config():
     """Load enabled models from config.py"""
     try:
         from config import MODELS_CONFIG
-        
+                
         models = []
         for model_id, config in MODELS_CONFIG.items():
             if config.get('enabled', True):
@@ -48,313 +37,33 @@ def load_models_from_config():
                     max_tokens=config.get('max_tokens', 4096),
                     temperature=config.get('temperature', 0.1)
                 ))
-        
-        if not models:
-            print("⚠️  No enabled models found in config.py")
-            print("   Enable at least one model by setting 'enabled': True")
-        
+                
         return models
-    
+        
     except ImportError:
-        print("⚠️  Could not import config.py, using default models")
-        return [
-            LocalLLMConfig(name="openhermes-neural-7b", max_tokens=32768),
-            LocalLLMConfig(name="llama2-chat-7b-q4", max_tokens=4096),
-        ]
-
-
-# Load models from config
-LOCAL_MODELS = load_models_from_config()
-
+        return [LocalLLMConfig(name="openhermes-neural-7b")]
 
 # ============================================================================
-# JSON Extraction Utility 
-# ============================================================================
-
-def extract_json_from_text(text: str) -> Optional[Dict]:
-    """
-    Aggressively extract JSON from text that might contain:
-    - Conversational preamble/postamble
-    - Markdown code blocks
-    - Mixed content
-    """
-    if not text or not text.strip():
-        return None
-    
-    # Method 1: Try to find JSON in markdown code blocks
-    # Match ```json ... ``` or ``` ... ```
-    json_block_pattern = r'```(?:json)?\s*([\s\S]*?)```'
-    matches = re.findall(json_block_pattern, text, re.IGNORECASE)
-    
-    if matches:
-        # Try each matched block
-        for match in matches:
-            cleaned = match.strip()
-            if cleaned.startswith('{') or cleaned.startswith('['):
-                try:
-                    return json.loads(cleaned)
-                except json.JSONDecodeError:
-                    continue
-    
-    # Method 2: Look for JSON object {...} or array [...]
-    # Find the longest valid JSON structure
-    for pattern in [r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', r'\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]']:
-        matches = re.finditer(pattern, text, re.DOTALL)
-        candidates = []
-        
-        for match in matches:
-            json_str = match.group(0)
-            try:
-                parsed = json.loads(json_str)
-                candidates.append((len(json_str), parsed))
-            except json.JSONDecodeError:
-                continue
-        
-        # Return the longest valid JSON found
-        if candidates:
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            return candidates[0][1]
-    
-    # Method 3: Try to parse the entire text after cleaning
-    cleaned_text = text.strip()
-    
-    # Remove common prefixes
-    prefixes_to_remove = [
-        r'^here\s+is\s+the\s+json.*?[:\n]',
-        r'^here\s+are\s+the\s+.*?[:\n]',
-        r'^the\s+json\s+is.*?[:\n]',
-        r'^response.*?[:\n]',
-        r'^output.*?[:\n]',
-        r'^sure[,!.\s]+',
-        r'^okay[,!.\s]+',
-    ]
-    
-    for prefix in prefixes_to_remove:
-        cleaned_text = re.sub(prefix, '', cleaned_text, flags=re.IGNORECASE | re.MULTILINE)
-    
-    cleaned_text = cleaned_text.strip()
-    
-    # Try direct parse
-    if cleaned_text.startswith('{') or cleaned_text.startswith('['):
-        try:
-            return json.loads(cleaned_text)
-        except json.JSONDecodeError:
-            pass
-    
-    return None
-
-
-# ============================================================================
-# DSPy Signatures for KG Extraction Tasks
-# ============================================================================
-
-class CustomEntityRefiner(dspy.Module):
-    """Custom refiner that bypasses DSPy's JSON parsing and handles raw LLM output."""
-    
-    def __init__(self):
-        super().__init__()
-        # Don't use dspy.Predict - we'll call the LM directly
-        
-    def forward(self, document_text, spacy_entities, spacy_relationships):
-        try:
-            # Get the configured LM from DSPy settings
-            lm = dspy.settings.lm
-            
-            # Build the prompt manually
-            prompt = f"""You are an expert in knowledge graph construction and entity extraction.
-
-Task: Refine and canonicalize the entities and relationships extracted by spaCy.
-
-Document Text:
-{document_text}
-
-Entities extracted by spaCy:
-{spacy_entities}
-
-Relationships extracted by spaCy:
-{spacy_relationships}
-
-Instructions:
-1. Create canonical IDs for entities (lowercase, underscores, e.g., "giacomo_medici")
-2. Resolve coreferences (e.g., "he" → "giacomo_medici")
-3. Add domain-specific attributes to entities
-4. Enhance relationships with the canonical entity IDs
-
-Output a SINGLE JSON object with this exact structure:
-{{
-  "entities": [
-    {{
-      "canonical_id": "entity_id",
-      "type": "PERSON|ORG|GPE|etc",
-      "mentions": ["mention1", "mention2"],
-      "attributes": {{"key": "value"}}
-    }}
-  ],
-  "relationships": [
-    {{
-      "subject": "canonical_id_1",
-      "relation_type": "SOLD_TO|ACQUIRED|etc",
-      "object": "canonical_id_2",
-      "attributes": {{"date": "1972", "location": "Geneva"}}
-    }}
-  ]
-}}
-
-Return ONLY the JSON object, no other text."""
-
-            print("\n" + "="*60)
-            print("CALLING LLM")
-            print("="*60)
-            print(f"Prompt length: {len(prompt)} chars")
-            
-            # Call LM directly
-            raw_response = lm(prompt=prompt)
-            
-            print("\n" + "="*60)
-            print("RAW LLM RESPONSE")
-            print("="*60)
-            print(f"Response length: {len(raw_response)} chars")
-            print(f"First 500 chars: {raw_response[:500]}")
-            
-            # Extract JSON using our robust extractor
-            parsed_json = extract_json_from_text(raw_response)
-            
-            if parsed_json is None:
-                print("❌ Failed to extract JSON from response")
-                print(f"Full response:\n{raw_response}")
-                # Return empty structure
-                parsed_json = {"entities": [], "relationships": []}
-            
-            # Return a simple object that mimics DSPy's output
-            class Result:
-                def __init__(self, data):
-                    self.refined_kg = data
-            
-            return Result(parsed_json)
-            
-        except Exception as e:
-            print(f"Error in CustomEntityRefiner.forward: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-
-
-class EntityRefinement(dspy.Signature):
-    """Refine and canonicalize entities extracted by spaCy.
-    
-    Given entities and text, produce canonical IDs, resolve coreferences,
-    and add domain-specific attributes. Return both entities and relationships in a single JSON object.
-    
-    NOTE: This signature is currently NOT USED because we bypass DSPy's automatic parsing
-    (which fails on conversational LLM responses). See CustomEntityRefiner for manual approach.
-    """
-    
-    document_text = dspy.InputField(desc="The source document text")
-    spacy_entities = dspy.InputField(desc="Entities extracted by spaCy with labels")
-    spacy_relationships = dspy.InputField(desc="Relationships extracted by spaCy")
-    
-    refined_kg = dspy.OutputField(desc='JSON object with two keys: "entities" (array of refined entities with canonical_id, type, mentions, attributes) and "relationships" (array of relationships with canonical entity IDs). Format: {"entities": [...], "relationships": [...]}')
-
-
-class CoreferenceResolution(dspy.Signature):
-    """Resolve which entity mentions refer to the same real-world entity."""
-    
-    entities = dspy.InputField(desc="List of entity mentions with context")
-    document_text = dspy.InputField(desc="Full document text for context")
-    
-    coreference_clusters = dspy.OutputField(desc="JSON mapping of canonical IDs to mention clusters")
-
-
-class RelationshipEnhancement(dspy.Signature):
-    """Enhance relationships with attributes like dates, amounts, and context."""
-    
-    relationship = dspy.InputField(desc="Basic relationship (subject, verb, object)")
-    document_text = dspy.InputField(desc="Document text for context")
-    entities_info = dspy.InputField(desc="Information about the entities involved")
-    
-    enhanced_relationship = dspy.OutputField(desc="Relationship with type, attributes, and metadata")
-
-
-# ============================================================================
-# DSPy Modules for KG Pipeline
-# ============================================================================
-
-class KGRefiner(dspy.Module):
-    """Main module for refining knowledge graph extraction."""
-    
-    def __init__(self):
-        super().__init__()
-        self.entity_refiner = CustomEntityRefiner()
-    
-    def forward(self, document_text, spacy_entities, spacy_relationships):
-        print("document_text:", document_text) 
-        print("spacy_entities:", spacy_entities) 
-        print("spacy_relationships:", spacy_relationships) 
-        # Format inputs
-        entities_str = "\n".join([
-            f"- {e['text']} ({e['label']})" 
-            for e in spacy_entities[:100]
-        ])
-        
-        if not spacy_relationships:
-            rels_str = ""
-        else:
-            rels_str = "\n".join([
-                f"- {r['subject']} --[{r['verb']}]--> {r['object']}"
-                for r in spacy_relationships[:50]
-            ])
-        
-        # Get refinement (now returns single combined output)
-        result = self.entity_refiner(
-            document_text=document_text,
-            spacy_entities=entities_str,
-            spacy_relationships=rels_str
-        )
-        print("Result from refiner:", result)
-        return result
-
-
-class CoreferenceResolver(dspy.Module):
-    """Resolve coreferences in entity mentions."""
-    
-    def __init__(self):
-        super().__init__()
-        self.resolver = dspy.ChainOfThought(CoreferenceResolution)
-    
-    def forward(self, entities, document_text):
-        entities_str = json.dumps(entities, indent=2)
-        result = self.resolver(
-            entities=entities_str,
-            document_text=document_text[:4000]
-        )
-        return result
-
-
-# ============================================================================
-# Custom DSPy LM for Local Models 
+# LocalLLM
 # ============================================================================
 
 class LocalLLM(dspy.LM):
-    """DSPy Language Model wrapper for local LLMs via OpenAI-compatible API."""
+    """Simple LLM wrapper that returns raw text."""
 
     def __init__(self, config: LocalLLMConfig, **kwargs):
         super().__init__(model=config.name)
         self.config = config
         self.history = []
-        self.kwargs = {
-            "temperature": config.temperature,
-            "max_tokens": config.max_tokens,
-            **kwargs
-        }
 
-    def _make_request(self, prompt: str, **kwargs) -> str:
-        """Internal method to make the actual API request."""
-        print("LocalLLM._make_request called!")
-        print("  Prompt:", prompt[:200], "...")
+    def __call__(self, prompt=None, messages=None, **kwargs):
+        if prompt is None and messages is None:
+            raise ValueError("Either 'prompt' or 'messages' must be provided")
         
-        # Merge instance kwargs with call-time kwargs
-        merged_kwargs = {**self.kwargs, **kwargs}
-        response = None
+        if messages is not None:
+            prompt_parts = []
+            for msg in messages:
+                prompt_parts.append(f"{msg['role']}: {msg['content']}")
+            prompt = "\n".join(prompt_parts)
         
         try:
             response = requests.post(
@@ -365,261 +74,75 @@ class LocalLLM(dspy.LM):
                 },
                 json={
                     "messages": [
-                        {"role": "system", "content": "You are an expert in knowledge graph construction and entity extraction. Always return valid JSON."},
+                        {"role": "system", "content": "You are an expert in knowledge graph refinement. Always return valid JSON arrays."},
                         {"role": "user", "content": prompt}
                     ],
                     "model": self.config.name,
-                    "stream": False,
-                    "temperature": merged_kwargs.get('temperature', self.config.temperature),
-                    "max_tokens": merged_kwargs.get('max_tokens', self.config.max_tokens)
+                    "temperature": self.config.temperature,
+                    "max_tokens": self.config.max_tokens
                 },
                 timeout=300
             )
-
-            response.raise_for_status()
             
+            content = response.json()["choices"][0]["message"]["content"]
+            print(f"Raw LLM response: {content}")
+            self.history.append({'prompt': prompt, 'response': content})
+            return content
+
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return "[]"
+
+# ============================================================================
+# JSON Extractor
+# ============================================================================
+
+class JSONExtractor:
+    """Extract JSON from LLM responses."""
+    
+    @staticmethod
+    def extract(text: str) -> list:
+        if isinstance(text, list):
+            return text
+        
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*', '', text)
+        
+        match = re.search(r'(\[.*?\])', text, re.DOTALL)
+        if match:
             try:
-                result = response.json()
-            except json.JSONDecodeError as e:
-                print(f"JSONDecodeError: {e}")
-                print(f"Raw response text: {response.text}")
-                raise
-
-            # Parse response
-            if "choices" in result and isinstance(result["choices"], list) and len(result["choices"]) > 0:
-                choice = result["choices"][0]
-                if "message" in choice and isinstance(choice["message"], dict) and "content" in choice["message"]:
-                    content = choice["message"]["content"]
-                    
-                    # Store in history
-                    self.history.append({
-                        'prompt': prompt,
-                        'response': content,
-                        'model': self.config.name
-                    })
-                    
-                    return content
-                else:
-                    print(f"Unexpected 'choice' format: {choice}")
-                    raise ValueError(f"Unexpected 'choice' format: {choice}")
-            else:
-                print(f"Unexpected response format: {result}")
-                raise ValueError(f"Unexpected response format: {result}")
-
-        except requests.exceptions.RequestException as e:
-            print(f"Error calling {self.config.name}: {e}")
-            return ""
-        except (KeyError, IndexError, ValueError) as e:
-            print(f"Error parsing response from {self.config.name}: {e}")
-            if response is not None:
-                print("Response content:", response.text)
-            return ""
-
-    def __call__(self, prompt=None, messages=None, **kwargs):
-        """DSPy-compatible __call__ interface."""
-        # Handle both prompt-based and messages-based calls
-        if prompt is not None:
-            return self._make_request(prompt, **kwargs)
-        elif messages is not None:
-            # Convert messages to a single prompt
-            prompt_parts = []
-            for msg in messages:
-                role = msg.get('role', 'user')
-                content = msg.get('content', '')
-                prompt_parts.append(f"{role}: {content}")
-            combined_prompt = "\n".join(prompt_parts)
-            return self._make_request(combined_prompt, **kwargs)
-        else:
-            raise ValueError("Either 'prompt' or 'messages' must be provided")
-
-    def basic_request(self, prompt: str, **kwargs) -> Dict[str, Any]:
-        """DSPy compatibility method."""
-        response_text = self._make_request(prompt, **kwargs)
-        return {"choices": [{"text": response_text}]}
-
-
-# ============================================================================
-# Evaluation Metrics
-# ============================================================================
-
-@dataclass
-class KGEvaluationMetrics:
-    """Metrics for evaluating knowledge graph quality."""
-    
-    # Entity metrics
-    num_entities: int
-    num_canonical_ids: int
-    avg_mentions_per_entity: float
-    entity_types_coverage: Dict[str, int]
-    
-    # Relationship metrics
-    num_relationships: int
-    num_typed_relationships: int
-    avg_attributes_per_relationship: float
-    
-    # Quality metrics
-    coreference_resolution_score: float
-    canonical_id_quality: float
-    attribute_completeness: float
-    
-    # Performance metrics
-    extraction_time: float
-    
-    def overall_score(self) -> float:
-        """Compute overall quality score (0-100)."""
-        weights = {
-            'coreference': 0.3,
-            'canonical_id': 0.2,
-            'attributes': 0.2,
-            'coverage': 0.15,
-            'relationships': 0.15
-        }
+                parsed = json.loads(match.group(1))
+                return parsed if isinstance(parsed, list) else []
+            except json.JSONDecodeError:
+                pass
         
-        coverage_score = min(self.num_entities / 50, 1.0)
-        rel_score = min(self.num_relationships / 30, 1.0)
-        
-        score = (
-            weights['coreference'] * self.coreference_resolution_score +
-            weights['canonical_id'] * self.canonical_id_quality +
-            weights['attributes'] * self.attribute_completeness +
-            weights['coverage'] * coverage_score +
-            weights['relationships'] * rel_score
-        ) * 100
-        
-        return round(score, 2)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for easy serialization."""
-        return {
-            'num_entities': self.num_entities,
-            'num_canonical_ids': self.num_canonical_ids,
-            'avg_mentions_per_entity': round(self.avg_mentions_per_entity, 2),
-            'entity_types_coverage': self.entity_types_coverage,
-            'num_relationships': self.num_relationships,
-            'num_typed_relationships': self.num_typed_relationships,
-            'avg_attributes_per_relationship': round(self.avg_attributes_per_relationship, 2),
-            'coreference_resolution_score': round(self.coreference_resolution_score, 2),
-            'canonical_id_quality': round(self.canonical_id_quality, 2),
-            'attribute_completeness': round(self.attribute_completeness, 2),
-            'extraction_time': round(self.extraction_time, 2),
-            'overall_score': self.overall_score()
-        }
-
-
-def evaluate_kg_quality(refined_data: Dict, ground_truth: Optional[Dict] = None) -> KGEvaluationMetrics:
-    """Evaluate the quality of extracted knowledge graph."""
-    
-    entities = refined_data.get('entities', [])
-    relationships = refined_data.get('relationships', [])
-    
-    # Entity metrics
-    num_entities = len(entities)
-    canonical_ids = [e.get('canonical_id') for e in entities if e.get('canonical_id')]
-    num_canonical_ids = len(canonical_ids)
-    
-    total_mentions = sum(len(e.get('mentions', [])) for e in entities)
-    avg_mentions = total_mentions / num_entities if num_entities > 0 else 0
-    
-    entity_types = defaultdict(int)
-    for e in entities:
-        entity_types[e.get('type', 'UNKNOWN')] += 1
-    
-    # Relationship metrics
-    num_relationships = len(relationships)
-    typed_rels = [r for r in relationships if r.get('relation_type')]
-    num_typed_relationships = len(typed_rels)
-    
-    total_rel_attrs = sum(len(r.get('attributes', {})) for r in relationships)
-    avg_rel_attrs = total_rel_attrs / num_relationships if num_relationships > 0 else 0
-    
-    # Quality metrics
-    valid_canonical_ids = sum(
-        1 for cid in canonical_ids 
-        if cid and re.match(r'^[a-z0-9_]+$', cid)
-    )
-    canonical_id_quality = valid_canonical_ids / len(canonical_ids) if canonical_ids else 0
-    
-    entities_with_attrs = sum(
-        1 for e in entities 
-        if e.get('attributes') and len(e.get('attributes', {})) > 0
-    )
-    attribute_completeness = entities_with_attrs / num_entities if num_entities > 0 else 0
-    
-    coreference_score = min(avg_mentions / 2.0, 1.0)
-    
-    return KGEvaluationMetrics(
-        num_entities=num_entities,
-        num_canonical_ids=num_canonical_ids,
-        avg_mentions_per_entity=avg_mentions,
-        entity_types_coverage=dict(entity_types),
-        num_relationships=num_relationships,
-        num_typed_relationships=num_typed_relationships,
-        avg_attributes_per_relationship=avg_rel_attrs,
-        coreference_resolution_score=coreference_score,
-        canonical_id_quality=canonical_id_quality,
-        attribute_completeness=attribute_completeness,
-        extraction_time=0.0
-    )
-
+        return []
 
 # ============================================================================
-# Dataset Creation
+# SpaCy Extractor
 # ============================================================================
 
-class KGDataset:
-    """Dataset for training and evaluating KG extraction."""
+class SpacyExtractor:
+    """Extract entities and relationships with spaCy."""
     
     def __init__(self):
-        self.examples = []
-    
-    def add_example(self, document_text: str, spacy_extraction: Dict, 
-                   ground_truth: Optional[Dict] = None):
-        """Add a training/test example."""
-        self.examples.append({
-            'document_text': document_text,
-            'spacy_extraction': spacy_extraction,
-            'ground_truth': ground_truth
-        })
-    
-    def load_from_directory(self, directory: str):
-        """Load examples from directory of annotated documents."""
-        pass
-
-
-# ============================================================================
-# Benchmarking and Optimization 
-# ============================================================================
-
-class KGOptimizer:
-    """Optimize KG extraction across different local LLMs."""
-    
-    def __init__(self, models: List[LocalLLMConfig], dataset: KGDataset):
-        self.models = models
-        self.dataset = dataset
-        self.results = []
-        
-        # Load spaCy model
-        print("Loading spaCy model...")
+        print("Loading spaCy...")
         self.nlp = spacy.load("en_core_web_trf")
         print("✅ spaCy loaded")
     
     def find_entity_for_span(self, token, entities):
-        """Find which entity (if any) contains or matches this token/span."""
         token_start = token.idx
         token_end = token.idx + len(token.text)
         
-        # Exact match
         for ent in entities:
             if token_start >= ent['start'] and token_end <= ent['end']:
                 return ent['text']
         
-        # Partial match
         for ent in entities:
             if (token_start >= ent['start'] and token_start < ent['end']) or \
                (token_end > ent['start'] and token_end <= ent['end']):
                 return ent['text']
         
-        # Text match
         token_text_lower = token.text.lower()
         for ent in entities:
             if token_text_lower in ent['text'].lower() or ent['text'].lower() in token_text_lower:
@@ -628,13 +151,12 @@ class KGOptimizer:
         return None
 
     def get_entity_head(self, span, entities):
-        """Get the head token of a span and find its corresponding entity."""
         if hasattr(span, 'root'):
             return self.find_entity_for_span(span.root, entities)
         return self.find_entity_for_span(span, entities)
 
-    def extract_with_spacy(self, text: str) -> Dict:
-        """Extract entities and relationships with spaCy (Stage 1)."""
+    def extract(self, text: str) -> dict:
+        """Run spaCy NER and relationship extraction."""
         doc = self.nlp(text)
         
         entities = []
@@ -646,15 +168,18 @@ class KGOptimizer:
                 "end": ent.end_char,
             })
         
-        # Relationship extraction
         relationships = []
-        
         transaction_verbs = {
-            'sell', 'buy', 'acquire', 'purchase', 'transfer', 'export', 'import', 
-            'smuggle', 'consign', 'operate', 'deal', 'trade', 'traffic', 'supply',
-            'provide', 'convict', 'charge', 'sentence', 'arrest', 'raid', 'open',
-            'close', 'found', 'establish', 'meet', 'return', 'transport', 'loot', 'steal'
-        }
+    'sell', 'buy', 'acquire', 'purchase', 'transfer', 'export', 'import',
+    'smuggle', 'consign', 'operate', 'deal', 'trade', 'traffic', 'supply',
+    'provide', 'convict', 'charge', 'sentence', 'arrest', 'raid', 'open',
+    'close', 'found', 'establish', 'meet', 'return', 'transport', 'loot', 'steal',
+    'auction', 'donate', 'bequeath', 'inherit', 'recover', 'possess', 'appropriate',
+    'confiscate', 'retrieve', 'excavate', 'plunder', 'pillage', 'defraud', 'forge',
+    'conceal', 'ship', 'move', 'dispatch', 'escort', 'relocate', 'investigate', 'seize',
+    'repatriate', 'expropriate', 'display', 'restore', 'store', 'own', 'handle',
+    'authenticate', 'value', 'appraise', 'attribute', 'exchange'
+}
         
         for token in doc:
             lemma = token.lemma_.lower()
@@ -663,24 +188,35 @@ class KGOptimizer:
             
             subject = None
             obj = None
-            prep_obj = None
+            prep_obj = None  # for prepositional objects
             
+            # Extract subject and objects from dependencies
             for child in token.children:
+                # Subject (active or passive)
                 if child.dep_ in ['nsubj', 'nsubjpass']:
                     subject = child
+                
+                # Direct object
                 elif child.dep_ in ['dobj', 'obj']:
                     obj = child
+                
+                # Prepositional phrases ("sold to X", "bought from Y")
                 elif child.dep_ == 'prep':
+                    # Find the object of the preposition
                     for pchild in child.children:
                         if pchild.dep_ == 'pobj':
                             prep_obj = pchild
                             break
+                
+                # Dative ("gave him", "told her")
                 elif child.dep_ == 'dative':
-                    if not obj:
+                    if not obj:  # Use dative as object if no direct object
                         obj = child
             
+            # Try to create relationships
             relationships_to_add = []
             
+            # Subject -> Object relationship
             if subject and obj:
                 subj_entity = self.get_entity_head(subject, entities)
                 obj_entity = self.get_entity_head(obj, entities)
@@ -694,6 +230,7 @@ class KGOptimizer:
                         'pattern': 'subj-verb-obj'
                     })
             
+            # Subject -> Prepositional Object relationship
             if subject and prep_obj:
                 subj_entity = self.get_entity_head(subject, entities)
                 prep_obj_entity = self.get_entity_head(prep_obj, entities)
@@ -707,6 +244,7 @@ class KGOptimizer:
                         'pattern': 'subj-verb-prep-obj'
                     })
             
+            # Object -> Prepositional Object relationship (passive constructions)
             if obj and prep_obj and not subject:
                 obj_entity = self.get_entity_head(obj, entities)
                 prep_obj_entity = self.get_entity_head(prep_obj, entities)
@@ -722,7 +260,7 @@ class KGOptimizer:
             
             relationships.extend(relationships_to_add)
         
-        # Deduplicate
+        # Deduplicate relationships
         unique_rels = []
         seen = set()
         for rel in relationships:
@@ -731,245 +269,822 @@ class KGOptimizer:
                 seen.add(key)
                 unique_rels.append(rel)
         
-        print(f"✅ spaCy extracted {len(entities)} entities and {len(unique_rels)} relationships")
+        print(f"✅ spaCy: {len(entities)} entities, {len(relationships)} relationships")
         
         return {
             "entities": entities,
-            "relationships": unique_rels,
-            "text": text
+            "relationships": unique_rels
         }
-    
-    def benchmark_model(self, config: LocalLLMConfig, example: Dict) -> Dict[str, Any]:
-        """Benchmark a single model on one example."""
-        import time
-        
-        print(f"\n{'='*60}")
-        print(f"Testing: {config.name}")
-        print(f"{'='*60}")
-        
-        # Configure DSPy with this model
-        lm = LocalLLM(config)
-        dspy.settings.configure(lm=lm)
-        
-        # Create module
-        refiner = KGRefiner()
-        
-        # Run extraction
-        start_time = time.time()
-        
-        spacy_extraction = example['spacy_extraction']
-        
-        try:
-            result = refiner(
-                document_text=example['document_text'],
-                spacy_entities=spacy_extraction['entities'],
-                spacy_relationships=spacy_extraction['relationships']
-            )
-            
-            # Get the refined data - it's already parsed JSON now, not a string
-            refined_data = result.refined_kg
-            
-            # Ensure it's a dict with the right keys
-            if not isinstance(refined_data, dict):
-                print(f"⚠️  refined_kg is not a dict: {type(refined_data)}")
-                if isinstance(refined_data, str):
-                    # Fallback: try to parse it
-                    refined_data = extract_json_from_text(refined_data)
-                    if refined_data is None:
-                        refined_data = {'entities': [], 'relationships': []}
-                else:
-                    refined_data = {'entities': [], 'relationships': []}
-            
-            # Ensure we have both keys
-            if 'entities' not in refined_data:
-                refined_data['entities'] = []
-            if 'relationships' not in refined_data:
-                refined_data['relationships'] = []
-            
-            extraction_time = time.time() - start_time
-            
-            print(f"\n{'='*60}")
-            print(f"EXTRACTION RESULTS")
-            print(f"{'='*60}")
-            print(f"Entities extracted: {len(refined_data['entities'])}")
-            print(f"Relationships extracted: {len(refined_data['relationships'])}")
-            print(f"Time taken: {extraction_time:.2f}s")
-            
-            # Evaluate
-            if refined_data and (refined_data['entities'] or refined_data['relationships']):
-                metrics = evaluate_kg_quality(refined_data, example.get('ground_truth'))
-                metrics.extraction_time = extraction_time
-                
-                print(f"✅ Success! Overall Score: {metrics.overall_score()}")
-                print(f"   Entities: {metrics.num_entities}, Relationships: {metrics.num_relationships}")
-                
-                return {
-                    'model': config.name,
-                    'success': True,
-                    'metrics': metrics.to_dict(),
-                    'refined_data': refined_data,
-                    'extraction_time': extraction_time
-                }
-            else:
-                print(f"❌ No entities or relationships extracted")
-                return {
-                    'model': config.name,
-                    'success': False,
-                    'error': 'Empty extraction'
-                }
-                
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return {
-                'model': config.name,
-                'success': False,
-                'error': str(e)
-            }
-    
-    def run_full_benchmark(self) -> pd.DataFrame:
-        """Run complete benchmark across all models and examples."""
-        
-        results = []
-        
-        for example_idx, example in enumerate(self.dataset.examples):
-            print(f"\n{'#'*60}")
-            print(f"Example {example_idx + 1}/{len(self.dataset.examples)}")
-            print(f"{'#'*60}")
-            
-            for model_config in self.models:
-                result = self.benchmark_model(model_config, example)
-                result['example_idx'] = example_idx
-                results.append(result)
-                
-                self.results.append(result)
-        
-        # Create summary DataFrame
-        df = pd.DataFrame([
-            {
-                'model': r['model'],
-                'example': r['example_idx'],
-                'success': r['success'],
-                'overall_score': r.get('metrics', {}).get('overall_score', 0) if r['success'] else 0,
-                'num_entities': r.get('metrics', {}).get('num_entities', 0) if r['success'] else 0,
-                'num_relationships': r.get('metrics', {}).get('num_relationships', 0) if r['success'] else 0,
-                'extraction_time': r.get('extraction_time', 0)
-            }
-            for r in results
-        ])
-        
-        return df
-    
-    def generate_report(self, output_file: str = "kg_optimization_report.md"):
-        """Generate a detailed markdown report of results."""
-        
-        df = pd.DataFrame([
-            {
-                'model': r['model'],
-                'success': r['success'],
-                **r.get('metrics', {})
-            }
-            for r in self.results if r['success']
-        ])
-        
-        # Group by model
-        summary = df.groupby('model').agg({
-            'overall_score': ['mean', 'std'],
-            'num_entities': 'mean',
-            'num_relationships': 'mean',
-            'extraction_time': 'mean'
-        }).round(2)
-        
-        # Generate report
-        with open(output_file, 'w') as f:
-            f.write("# Knowledge Graph Extraction Optimization Report\n\n")
-            f.write("## Summary Statistics by Model\n\n")
-            f.write(summary.to_markdown())
-            f.write("\n\n")
-            
-            f.write("## Top Performing Models\n\n")
-            top_models = df.groupby('model')['overall_score'].mean().sort_values(ascending=False)
-            for i, (model, score) in enumerate(top_models.head(3).items(), 1):
-                f.write(f"{i}. **{model}**: {score:.2f}/100\n")
-            
-            f.write("\n## Detailed Results\n\n")
-            for result in self.results:
-                if result['success']:
-                    f.write(f"### {result['model']}\n\n")
-                    metrics = result['metrics']
-                    f.write(f"- Overall Score: **{metrics['overall_score']}/100**\n")
-                    f.write(f"- Entities: {metrics['num_entities']} ")
-                    f.write(f"(Canonical IDs: {metrics['num_canonical_ids']})\n")
-                    f.write(f"- Relationships: {metrics['num_relationships']}\n")
-                    f.write(f"- Extraction Time: {metrics['extraction_time']:.2f}s\n")
-                    f.write(f"- Quality Scores:\n")
-                    f.write(f"  - Coreference: {metrics['coreference_resolution_score']:.2f}\n")
-                    f.write(f"  - Canonical ID: {metrics['canonical_id_quality']:.2f}\n")
-                    f.write(f"  - Attributes: {metrics['attribute_completeness']:.2f}\n")
-                    f.write("\n")
-        
-        print(f"\n✅ Report saved to {output_file}")
-
 
 # ============================================================================
-# Main Execution
+# Custom Refinement Module (bypasses DSPy response parsing)
+# ============================================================================
+
+class CustomRefiner(dspy.Module):
+    """
+    Custom module that builds prompts manually and handles raw responses.
+    This is optimizable by DSPy because it has a demos attribute.
+    """
+    
+    def __init__(self, task_description: str, output_field_name: str):
+        super().__init__()
+        self.task_description = task_description
+        self.output_field_name = output_field_name
+        self.demos = []  # DSPy optimizer will populate this
+        self.json_extractor = JSONExtractor()
+    
+    def _build_prompt(self, **kwargs):
+        """Build prompt with optional few-shot examples."""
+        parts = [self.task_description, ""]
+        
+        # Add few-shot examples if available
+        if self.demos:
+            parts.append(f"Here are {len(self.demos)} example(s):\n")
+            for i, demo in enumerate(self.demos, 1):
+                parts.append(f"=== Example {i} ===")
+                
+                # Show inputs
+                for key, value in kwargs.items():
+                    if hasattr(demo, key):
+                        demo_value = str(getattr(demo, key))[:200]
+                        parts.append(f"{key}: {demo_value}...")
+                
+                # Show expected output
+                if hasattr(demo, self.output_field_name):
+                    demo_output = getattr(demo, self.output_field_name)
+                    if isinstance(demo_output, list):
+                        demo_output = json.dumps(demo_output)[:200]
+                    parts.append(f"{self.output_field_name}: {demo_output}...")
+                
+                parts.append("")
+        
+        # Add current task
+        parts.append("=== Your Task ===")
+        for key, value in kwargs.items():
+            parts.append(f"{key}: {value}")
+        
+        parts.append("")
+        parts.append(f"Return ONLY a valid JSON array. No other text or formatting.")
+        
+        return "\n".join(parts)
+    
+    def forward(self, **kwargs):
+        """Execute the module."""
+        try:
+            prompt = self._build_prompt(**kwargs)
+            raw_response = dspy.settings.lm(prompt)
+            
+            # Parse JSON from raw response
+            parsed_output = self.json_extractor.extract(raw_response)
+            
+            # Return prediction
+            result = dspy.Prediction(**{self.output_field_name: parsed_output})
+            
+            # Store inputs for potential use as demos
+            for key, value in kwargs.items():
+                setattr(result, key, value)
+            
+            return result
+            
+        except Exception as e:
+            print(f"⚠️ Refiner error: {e}")
+            return dspy.Prediction(**{self.output_field_name: []})
+
+# ============================================================================
+# Create Training Data
+# ============================================================================
+
+def create_training_data():
+    """Create training data matching the sophisticated refinement schema."""
+    
+    spacy_extractor = SpacyExtractor()
+    
+    entity_examples = []
+    relationship_examples = []
+    
+    # ========================================================================
+    # Example 1: Coreference resolution + Role classification
+    # ========================================================================
+    text1 = "Giacomo Medici started dealing in antiquities in Rome during the 1960s. In 1967, Medici was convicted in Italy of receiving looted artefacts. He met Robert Hecht the same year."
+    spacy_result1 = spacy_extractor.extract(text1)
+    
+    # GOLD STANDARD: Shows coreference (Medici, He → giacomo_medici)
+    gold_entities1 = [
+        {
+            "canonical_id": "giacomo_medici",
+            "full_name": "Giacomo Medici",
+            "type": "PERSON",
+            "mentions": ["Giacomo Medici", "Medici", "He"],
+            "attributes": {
+                "role": "dealer",
+                "nationality": "Italian"
+            }
+        },
+        {
+            "canonical_id": "robert_hecht",
+            "full_name": "Robert Hecht",
+            "type": "PERSON",
+            "mentions": ["Robert Hecht"],
+            "attributes": {
+                "role": "dealer",
+                "nationality": "American"
+            }
+        },
+        {
+            "canonical_id": "rome",
+            "type": "LOCATION",
+            "mentions": ["Rome"],
+            "attributes": {
+                "location_type": "city",
+                "country": "Italy",
+                "significance": "dealing_location"
+            }
+        },
+        {
+            "canonical_id": "italy",
+            "type": "LOCATION",
+            "mentions": ["Italy"],
+            "attributes": {
+                "location_type": "country",
+                "significance": "jurisdiction"
+            }
+        }
+    ]
+    
+    gold_relationships1 = [
+        {
+            "source_id": "giacomo_medici",
+            "target_id": "rome",
+            "relation_type": "operated_in",
+            "attributes": {
+                "date": "1960s",
+                "activity": "dealing in antiquities"
+            }
+        },
+        {
+            "source_id": "giacomo_medici",
+            "target_id": "giacomo_medici",
+            "relation_type": "convicted",
+            "attributes": {
+                "date": "1967",
+                "location": "italy",
+                "charge": "receiving looted artefacts",
+                "legal_status": "convicted"
+            }
+        },
+        {
+            "source_id": "giacomo_medici",
+            "target_id": "robert_hecht",
+            "relation_type": "met",
+            "attributes": {
+                "date": "1967"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text1,
+        spacy_entities=json.dumps(spacy_result1["entities"]),
+        expected_entities=gold_entities1
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text1,
+        spacy_entities=json.dumps(spacy_result1["entities"]),
+        spacy_relationships=json.dumps(spacy_result1["relationships"]),
+        expected_relationships=gold_relationships1
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    # ========================================================================
+    # Example 2: Artifact tracking + Transaction details
+    # ========================================================================
+    text2 = "In December 1971, Medici bought the illegally-excavated Euphronios krater from tombaroli for $100,000. He transported it to Switzerland and sold it to Hecht."
+    spacy_result2 = spacy_extractor.extract(text2)
+    
+    gold_entities2 = [
+        {
+            "canonical_id": "giacomo_medici",
+            "full_name": "Giacomo Medici",
+            "type": "PERSON",
+            "mentions": ["Medici", "He"],
+            "attributes": {
+                "role": "dealer"
+            }
+        },
+        {
+            "canonical_id": "euphronios_sarpedon_krater",
+            "full_name": "Euphronios (Sarpedon) krater",
+            "type": "ARTIFACT",
+            "mentions": ["Euphronios krater"],
+            "attributes": {
+                "object_type": "krater",
+                "artist": "Euphronios",
+                "legal_status": "looted",
+                "condition": "illegally-excavated"
+            }
+        },
+        {
+            "canonical_id": "tombaroli",
+            "type": "PERSON",
+            "mentions": ["tombaroli"],
+            "attributes": {
+                "role": "looter",
+                "description": "grave robbers"
+            }
+        },
+        {
+            "canonical_id": "robert_hecht",
+            "full_name": "Robert Hecht",
+            "type": "PERSON",
+            "mentions": ["Hecht"],
+            "attributes": {
+                "role": "dealer"
+            }
+        },
+        {
+            "canonical_id": "switzerland",
+            "type": "LOCATION",
+            "mentions": ["Switzerland"],
+            "attributes": {
+                "location_type": "country",
+                "significance": "transit_location"
+            }
+        }
+    ]
+    
+    gold_relationships2 = [
+        {
+            "source_id": "giacomo_medici",
+            "target_id": "euphronios_sarpedon_krater",
+            "relation_type": "purchased",
+            "attributes": {
+                "date": "December 1971",
+                "amount": "$100,000",
+                "seller": "tombaroli",
+                "legal_status": "illegal_transaction"
+            }
+        },
+        {
+            "source_id": "giacomo_medici",
+            "target_id": "euphronios_sarpedon_krater",
+            "relation_type": "transported",
+            "attributes": {
+                "destination": "switzerland",
+                "date": "1971"
+            }
+        },
+        {
+            "source_id": "giacomo_medici",
+            "target_id": "robert_hecht",
+            "relation_type": "sold_to",
+            "attributes": {
+                "date": "1971",
+                "artifact": "euphronios_sarpedon_krater",
+                "location": "switzerland"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text2,
+        spacy_entities=json.dumps(spacy_result2["entities"]),
+        expected_entities=gold_entities2
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text2,
+        spacy_entities=json.dumps(spacy_result2["entities"]),
+        spacy_relationships=json.dumps(spacy_result2["relationships"]),
+        expected_relationships=gold_relationships2
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    # ========================================================================
+    # Example 3: Museum acquisition + Network relationships
+    # ========================================================================
+    text3 = "The J. Paul Getty Museum acquired the krater through Hecht in 1972 for $1 million. The museum's curator was Marion True."
+    spacy_result3 = spacy_extractor.extract(text3)
+    
+    gold_entities3 = [
+        {
+            "canonical_id": "j_paul_getty_museum",
+            "full_name": "J. Paul Getty Museum",
+            "type": "ORGANIZATION",
+            "mentions": ["J. Paul Getty Museum", "The museum"],
+            "attributes": {
+                "entity_type": "museum",
+                "location": "Los Angeles"
+            }
+        },
+        {
+            "canonical_id": "euphronios_sarpedon_krater",
+            "full_name": "Euphronios (Sarpedon) krater",
+            "type": "ARTIFACT",
+            "mentions": ["the krater"],
+            "attributes": {
+                "object_type": "krater"
+            }
+        },
+        {
+            "canonical_id": "robert_hecht",
+            "full_name": "Robert Hecht",
+            "type": "PERSON",
+            "mentions": ["Hecht"],
+            "attributes": {
+                "role": "dealer"
+            }
+        },
+        {
+            "canonical_id": "marion_true",
+            "full_name": "Marion True",
+            "type": "PERSON",
+            "mentions": ["Marion True"],
+            "attributes": {
+                "role": "curator",
+                "affiliation": "j_paul_getty_museum"
+            }
+        }
+    ]
+    
+    gold_relationships3 = [
+        {
+            "source_id": "j_paul_getty_museum",
+            "target_id": "euphronios_sarpedon_krater",
+            "relation_type": "acquired",
+            "attributes": {
+                "date": "1972",
+                "amount": "$1 million",
+                "intermediary": "robert_hecht",
+                "transaction_type": "purchase"
+            }
+        },
+        {
+            "source_id": "robert_hecht",
+            "target_id": "j_paul_getty_museum",
+            "relation_type": "sold_to",
+            "attributes": {
+                "date": "1972",
+                "artifact": "euphronios_sarpedon_krater",
+                "amount": "$1 million"
+            }
+        },
+        {
+            "source_id": "marion_true",
+            "target_id": "j_paul_getty_museum",
+            "relation_type": "employed_by",
+            "attributes": {
+                "role": "curator",
+                "date": "1972"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text3,
+        spacy_entities=json.dumps(spacy_result3["entities"]),
+        expected_entities=gold_entities3
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text3,
+        spacy_entities=json.dumps(spacy_result3["entities"]),
+        spacy_relationships=json.dumps(spacy_result3["relationships"]),
+        expected_relationships=gold_relationships3
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    # ========================================================================
+    # Example 4: Law enforcement action + Evidence
+    # ========================================================================
+    text4 = "In 1995, Italian authorities raided Medici's warehouse in the Geneva Freeport. They seized 3,800 photographs of looted artifacts."
+    spacy_result4 = spacy_extractor.extract(text4)
+    
+    gold_entities4 = [
+        {
+            "canonical_id": "italian_authorities",
+            "type": "ORGANIZATION",
+            "mentions": ["Italian authorities", "They"],
+            "attributes": {
+                "entity_type": "law_enforcement",
+                "jurisdiction": "Italy"
+            }
+        },
+        {
+            "canonical_id": "giacomo_medici",
+            "full_name": "Giacomo Medici",
+            "type": "PERSON",
+            "mentions": ["Medici"],
+            "attributes": {
+                "role": "dealer"
+            }
+        },
+        {
+            "canonical_id": "geneva_freeport",
+            "full_name": "Geneva Freeport",
+            "type": "LOCATION",
+            "mentions": ["Geneva Freeport"],
+            "attributes": {
+                "location_type": "storage_facility",
+                "country": "Switzerland",
+                "significance": "storage_of_looted_artifacts"
+            }
+        }
+    ]
+    
+    gold_relationships4 = [
+        {
+            "source_id": "italian_authorities",
+            "target_id": "geneva_freeport",
+            "relation_type": "raided",
+            "attributes": {
+                "date": "1995",
+                "target": "giacomo_medici",
+                "legal_action": "search_and_seizure"
+            }
+        },
+        {
+            "source_id": "giacomo_medici",
+            "target_id": "geneva_freeport",
+            "relation_type": "operated",
+            "attributes": {
+                "facility_type": "warehouse",
+                "purpose": "storage"
+            }
+        },
+        {
+            "source_id": "italian_authorities",
+            "target_id": "giacomo_medici",
+            "relation_type": "seized_evidence_from",
+            "attributes": {
+                "date": "1995",
+                "items": "3,800 photographs of looted artifacts",
+                "location": "geneva_freeport"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text4,
+        spacy_entities=json.dumps(spacy_result4["entities"]),
+        expected_entities=gold_entities4
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text4,
+        spacy_entities=json.dumps(spacy_result4["entities"]),
+        spacy_relationships=json.dumps(spacy_result4["relationships"]),
+        expected_relationships=gold_relationships4
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    return entity_examples, relationship_examples
+
+# ============================================================================
+# Metrics
+# ============================================================================
+
+# ============================================================================
+# Updated Metrics (Match new gold standard schema)
+# ============================================================================
+
+def entity_refinement_metric(example: dspy.Example, prediction: dspy.Prediction, trace=None) -> float:
+    """
+    Evaluate entity refinement with the new canonical_id schema.
+    Compare based on canonical_ids instead of text strings.
+    """
+    if not hasattr(example, 'expected_entities') or not hasattr(prediction, 'refined_entities'):
+        return 0.0
+    
+    expected = example.expected_entities
+    predicted = prediction.refined_entities
+    
+    if not predicted or not expected:
+        return 0.0
+    
+    # Extract canonical_ids (or fall back to full_name)
+    expected_ids = set()
+    for e in expected:
+        if isinstance(e, dict):
+            if 'canonical_id' in e:
+                expected_ids.add(e['canonical_id'])
+            elif 'full_name' in e:
+                expected_ids.add(e['full_name'].lower().replace(' ', '_'))
+    
+    predicted_ids = set()
+    for e in predicted:
+        if isinstance(e, dict):
+            if 'canonical_id' in e:
+                predicted_ids.add(e['canonical_id'])
+            elif 'full_name' in e:
+                predicted_ids.add(e['full_name'].lower().replace(' ', '_'))
+    
+    if not expected_ids:
+        return 0.0
+    
+    # Calculate F1
+    true_positives = len(expected_ids & predicted_ids)
+    precision = true_positives / len(predicted_ids) if predicted_ids else 0.0
+    recall = true_positives / len(expected_ids)
+    
+    if precision + recall == 0:
+        return 0.0
+    
+    f1 = 2 * (precision * recall) / (precision + recall)
+    return f1
+
+def relationship_refinement_metric(example: dspy.Example, prediction: dspy.Prediction, trace=None) -> float:
+    """
+    Evaluate relationship refinement with the new schema.
+    Compare based on (source_id, relation_type, target_id) tuples.
+    """
+    if not hasattr(example, 'expected_relationships') or not hasattr(prediction, 'refined_relationships'):
+        return 0.0
+    
+    expected = example.expected_relationships
+    predicted = prediction.refined_relationships
+    
+    if not predicted or not expected:
+        return 0.0
+    
+    # Create relationship tuples using new schema (source_id, relation_type, target_id)
+    expected_rels = set()
+    for r in expected:
+        if isinstance(r, dict):
+            if all(k in r for k in ['source_id', 'relation_type', 'target_id']):
+                expected_rels.add((
+                    r['source_id'].lower(),
+                    r['relation_type'].lower(),
+                    r['target_id'].lower()
+                ))
+    
+    predicted_rels = set()
+    for r in predicted:
+        if isinstance(r, dict):
+            if all(k in r for k in ['source_id', 'relation_type', 'target_id']):
+                predicted_rels.add((
+                    r['source_id'].lower(),
+                    r['relation_type'].lower(),
+                    r['target_id'].lower()
+                ))
+            # Also support old schema (subject, predicate, object) for backward compatibility
+            elif all(k in r for k in ['subject', 'predicate', 'object']):
+                predicted_rels.add((
+                    r['subject'].lower(),
+                    r['predicate'].lower(),
+                    r['object'].lower()
+                ))
+    
+    if not expected_rels:
+        return 0.0
+    
+    # Calculate F1
+    true_positives = len(expected_rels & predicted_rels)
+    precision = true_positives / len(predicted_rels) if predicted_rels else 0.0
+    recall = true_positives / len(expected_rels)
+    
+    if precision + recall == 0:
+        return 0.0
+    
+    f1 = 2 * (precision * recall) / (precision + recall)
+    return f1
+
+# ============================================================================
+# Custom Optimizer
+# ============================================================================
+
+# ============================================================================
+# Custom Optimizer (COMPLETE FIX)
+# ============================================================================
+
+class SimpleBootstrap:
+    """Simple optimizer that adds successful examples as demos."""
+    
+    def __init__(self, metric, max_demos=3, threshold=0.5, input_fields=None):
+        self.metric = metric
+        self.max_demos = max_demos
+        self.threshold = threshold
+        self.input_fields = input_fields  # Explicitly specify which fields are inputs
+    
+    def compile(self, student, trainset):
+        """Add successful examples as demos."""
+        print(f"  Running bootstrap on {len(trainset)} examples...")
+        
+        # If input_fields not specified, try to infer
+        if self.input_fields is None:
+            print(f"  WARNING: input_fields not specified, will try to infer...")
+            if trainset:
+                # Get all non-expected fields from first example
+                self.input_fields = [
+                    k for k in trainset[0].__dict__.keys() 
+                    if not k.startswith('_') and not k.startswith('expected_')
+                ]
+                print(f"  Inferred input fields: {self.input_fields}")
+        
+        good_demos = []
+        
+        for i, example in enumerate(trainset):
+            try:
+                # Build kwargs using specified input fields
+                kwargs = {field: getattr(example, field) for field in self.input_fields}
+                
+                print(f"    Example {i+1}: ", end="")
+                
+                # Run the student module
+                pred = student(**kwargs)
+                
+                # Check if it's a good example
+                score = self.metric(example, pred)
+                print(f"score = {score:.2f}")
+                
+                if score >= self.threshold:
+                    # Add output field to example for use as demo
+                    output_field = student.output_field_name
+                    if hasattr(pred, output_field):
+                        setattr(example, output_field, getattr(pred, output_field))
+                        good_demos.append(example)
+                    
+            except Exception as e:
+                print(f"error = {e}")
+        
+        print(f"  Found {len(good_demos)} good examples (threshold={self.threshold})")
+        
+        # Add demos to student
+        student.demos = good_demos[:self.max_demos]
+        print(f"  Added {len(student.demos)} demos to module")
+        
+        return student
+
+# ============================================================================
+# Main
 # ============================================================================
 
 def main():
-    """Main execution function."""
+    print("=" * 80)
+    print("Two-Stage KG: spaCy → LLM Refinement (Custom Modules)")
+    print("=" * 80)
     
-    print("="*60)
-    print("DSPy Knowledge Graph Extraction Optimizer")
-    print("="*60)
-    
-    # Display loaded models
-    print(f"\n📋 Loaded {len(LOCAL_MODELS)} enabled model(s) from config.py:")
-    for i, model in enumerate(LOCAL_MODELS, 1):
-        print(f"   {i}. {model.name} (max_tokens: {model.max_tokens})")
-    
+    # Load models
+    LOCAL_MODELS = load_models_from_config()
     if not LOCAL_MODELS:
-        print("\n❌ No enabled models found!")
-        print("   Edit config.py and set 'enabled': True for at least one model")
+        print("❌ No models!")
         return
     
-    # Create dataset
-    dataset = KGDataset()
+    print(f"\n📦 Models: {[m.name for m in LOCAL_MODELS]}")
     
-    # Add example
-    example_text = """
-    Giacomo Medici was convicted in 2004 for trafficking looted artifacts. 
-    He sold numerous antiquities to Robert Hecht, who then supplied them to museums.
-    The J. Paul Getty Museum acquired the Euphronios Sarpedon Krater from Hecht in 1972.
-    Italian authorities raided Medici's warehouse in Geneva in 1995, finding thousands
-    of photographs of looted artifacts.
-    """
+    # Create training data
+    print("\n📚 Creating training data...")
+    entity_dataset, relationship_dataset = create_training_data()
+    print(f"✅ {len(entity_dataset)} entity examples, {len(relationship_dataset)} relationship examples")
     
-    optimizer = KGOptimizer(LOCAL_MODELS, dataset)
-    spacy_extraction = optimizer.extract_with_spacy(example_text)
-    
-    dataset.add_example(
-        document_text=example_text,
-        spacy_extraction=spacy_extraction
-    )
-    
-    # Run benchmark
-    print("\nStarting benchmark...")
-    results_df = optimizer.run_full_benchmark()
-    
-    # Display results
-    print("\n" + "="*60)
-    print("RESULTS SUMMARY")
-    print("="*60)
-    print(results_df.to_string())
-    
-    # Generate detailed report
-    optimizer.generate_report()
-    
-    # Save results
-    results_df.to_csv("kg_optimization_results.csv", index=False)
-    print("\n✅ Results saved to kg_optimization_results.csv")
+    # Optimize for each model
+    for model_config in LOCAL_MODELS:
+        print("\n" + "=" * 80)
+        print(f"MODEL: {model_config.name}")
+        print("=" * 80)
+        
+        lm = LocalLLM(model_config)
+        dspy.settings.configure(lm=lm)
+        
+        # ENTITY REFINEMENT
+        print("\n🔧 Entity refinement optimization...")
+        entity_refiner = CustomRefiner(
+            task_description=    
+"""
+Review spaCy entities and refine them into canonical form.
 
+For each entity:
+1. Assign a canonical_id (lowercase_underscore format).
+2. Provide full_name if known.
+3. Set type.  The 'type' value *must* be one of these: PERSON, ORGANIZATION, ARTIFACT, LOCATION.
+4. List all mentions found in text.
+5. Add attributes (role, entity_type, etc.) that describe important properties.
+   For example, for a PERSON, include 'role' (e.g., "dealer"), 'nationality'.  For a LOCATION, include 'location_type' (e.g., "city", "country").
+
+Return *only* a valid JSON array. Each object in the array should represent an entity. 
+The JSON objects must have the keys: "canonical_id", "full_name", "type", "mentions", "attributes".
+The "attributes" value should be a JSON object (a dictionary).
+Do *not* include any other text or tokens (like <|end_of_turn|>).
+
+Here's an example of the *expected output format*:
+[
+  {
+    "canonical_id": "giacomo_medici",
+    "full_name": "Giacomo Medici",
+    "type": "PERSON",
+    "mentions": ["Giacomo Medici", "Medici"],
+    "attributes": {"role": "dealer", "nationality": "Italian"}
+  },
+  {
+    "canonical_id": "italy",
+    "full_name": "Italy",
+    "type": "LOCATION",
+    "mentions": ["Italy"],
+    "attributes": {"location_type": "country", "significance": "jurisdiction"}
+  }
+]
+
+Follow this format *exactly*.
+
+""",
+            output_field_name="refined_entities"
+)
+        
+        optimizer = SimpleBootstrap(
+            metric=entity_refinement_metric,
+            max_demos=2,
+            threshold=0.3,
+            input_fields=['text', 'spacy_entities']  
+            )
+        
+        optimized_entity_refiner = optimizer.compile(entity_refiner, entity_dataset)
+
+        
+        # Test
+        print("\n  Testing optimized entity refiner...")
+        test_ex = entity_dataset[0]
+        test_pred = optimized_entity_refiner(
+            text=test_ex.text,
+            spacy_entities=test_ex.spacy_entities
+        )
+        test_score = entity_refinement_metric(test_ex, test_pred)
+        print(f"  ✅ Test F1: {test_score:.3f}")
+        
+        # RELATIONSHIP REFINEMENT
+        print("\n🔧 Relationship refinement optimization...")
+        rel_refiner = CustomRefiner(
+            task_description="""Review spaCy relationships and refine them into canonical form.
+
+For each relationship:
+1. Use source_id and target_id (canonical entity IDs)
+2. Set relation_type (met, sold_to, acquired, etc.)
+3. Add attributes (date, amount, location, etc.)
+
+Return JSON array with structure:
+{
+  "source_id": "giacomo_medici",
+  "target_id": "robert_hecht",
+  "relation_type": "met",
+  "attributes": {"date": "1967"}
+}""",
+             output_field_name="refined_relationships"
+)
+        
+        optimizer = SimpleBootstrap(
+            metric=relationship_refinement_metric,
+            max_demos=2,
+            threshold=0.3,
+            input_fields=['text', 'spacy_entities', 'spacy_relationships'] 
+            )
+
+        optimized_rel_refiner = optimizer.compile(rel_refiner, relationship_dataset)
+        
+        # Test
+        print("\n  Testing optimized relationship refiner...")
+        test_ex = relationship_dataset[0]
+        test_pred = optimized_rel_refiner(
+            text=test_ex.text,
+            spacy_entities=test_ex.spacy_entities,
+            spacy_relationships=test_ex.spacy_relationships
+        )
+        test_score = relationship_refinement_metric(test_ex, test_pred)
+        print(f"  ✅ Test F1: {test_score:.3f}")
+        
+        print(f"\n✅ {model_config.name} optimization complete!")
+        print(f"   Entity refiner has {len(optimized_entity_refiner.demos)} demos")
+        print(f"   Relationship refiner has {len(optimized_rel_refiner.demos)} demos")
+
+           # After optimization completes:
+    print("\n" + "=" * 80)
+    print("PROMPT INSPECTION")
+    print("=" * 80)
+    
+    # Inspect entity refiner
+    print(f"\n✨ Entity Refiner: {len(optimized_entity_refiner.demos)} demos added")
+    test_entity_prompt = optimized_entity_refiner._build_prompt(
+        text=entity_dataset[0].text,
+        spacy_entities=entity_dataset[0].spacy_entities
+    )
+    print(f"\nSample prompt length: {len(test_entity_prompt)} chars")
+    print("\nFirst 1000 characters of prompt:")
+    print("-" * 80)
+    print(test_entity_prompt[:1000])
+    print("...")
+    
+    # Save full prompts
+    with open(f"optimized_prompts_{model_config.name}.txt", "w") as f:
+        f.write("ENTITY REFINEMENT PROMPT\n")
+        f.write("=" * 80 + "\n")
+        f.write(test_entity_prompt)
+        f.write("\n\n")
+        
+        test_rel_prompt = optimized_rel_refiner._build_prompt(
+            text=relationship_dataset[0].text,
+            spacy_entities=relationship_dataset[0].spacy_entities,
+            spacy_relationships=relationship_dataset[0].spacy_relationships
+        )
+        
+        f.write("\n\nRELATIONSHIP REFINEMENT PROMPT\n")
+        f.write("=" * 80 + "\n")
+        f.write(test_rel_prompt)
+    
+    print(f"\n✅ Full prompts saved to: optimized_prompts_{model_config.name}.txt")
 
 if __name__ == "__main__":
     main()
