@@ -849,10 +849,6 @@ def relationship_refinement_metric(example: dspy.Example, prediction: dspy.Predi
 # Custom Optimizer
 # ============================================================================
 
-# ============================================================================
-# Custom Optimizer (COMPLETE FIX)
-# ============================================================================
-
 class SimpleBootstrap:
     """Simple optimizer that adds successful examples as demos."""
     
