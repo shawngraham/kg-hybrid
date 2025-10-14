@@ -107,7 +107,8 @@ class JSONExtractor:
         
         text = re.sub(r'```json\s*', '', text)
         text = re.sub(r'```\s*', '', text)
-        
+        #Remove end_of_turn
+        text = re.sub(r'<\|end_of_turn\|>\s*$', '', text) # Add this line
         match = re.search(r'(\[.*?\])', text, re.DOTALL)
         if match:
             try:
