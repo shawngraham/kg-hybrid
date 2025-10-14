@@ -68,7 +68,7 @@ LOCAL_MODELS = load_models_from_config()
 
 
 # ============================================================================
-# JSON Extraction Utility (FIXED - moved outside of class)
+# JSON Extraction Utility 
 # ============================================================================
 
 def extract_json_from_text(text: str) -> Optional[Dict]:
@@ -331,7 +331,7 @@ class CoreferenceResolver(dspy.Module):
 
 
 # ============================================================================
-# Custom DSPy LM for Local Models (FIXED)
+# Custom DSPy LM for Local Models 
 # ============================================================================
 
 class LocalLLM(dspy.LM):
@@ -587,7 +587,7 @@ class KGDataset:
 
 
 # ============================================================================
-# Benchmarking and Optimization (FIXED)
+# Benchmarking and Optimization 
 # ============================================================================
 
 class KGOptimizer:
