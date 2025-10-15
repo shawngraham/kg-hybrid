@@ -416,8 +416,12 @@ class CustomRefiner(dspy.Module):
 # Create Training Data
 # ============================================================================
 
+# ============================================================================
+# Training Data (for optimization) - Original Complex Schema
+# ============================================================================
+
 def create_training_data():
-    """Create training data matching the sophisticated refinement schema."""
+    """Training examples with full sophisticated schema - 4 examples."""
     
     spacy_extractor = SpacyExtractor()
     
@@ -425,12 +429,11 @@ def create_training_data():
     relationship_examples = []
     
     # ========================================================================
-    # Example 1: Coreference resolution + Role classification
+    # Training Example 1
     # ========================================================================
     text1 = "Giacomo Medici started dealing in antiquities in Rome during the 1960s. In 1967, Medici was convicted in Italy of receiving looted artefacts. He met Robert Hecht the same year."
     spacy_result1 = spacy_extractor.extract(text1)
     
-    # GOLD STANDARD: Shows coreference (Medici, He → giacomo_medici)
     gold_entities1 = [
         {
             "canonical_id": "giacomo_medici",
@@ -518,7 +521,7 @@ def create_training_data():
     ).with_inputs("text", "spacy_entities", "spacy_relationships"))
     
     # ========================================================================
-    # Example 2: Artifact tracking + Transaction details
+    # Training Example 2
     # ========================================================================
     text2 = "In December 1971, Medici bought the illegally-excavated Euphronios krater from tombaroli for $100,000. He transported it to Switzerland and sold it to Hecht."
     spacy_result2 = spacy_extractor.extract(text2)
@@ -537,7 +540,7 @@ def create_training_data():
             "canonical_id": "euphronios_sarpedon_krater",
             "full_name": "Euphronios (Sarpedon) krater",
             "type": "ARTIFACT",
-            "mentions": ["Euphronios krater"],
+            "mentions": ["Euphronios krater", "it"],
             "attributes": {
                 "object_type": "krater",
                 "artist": "Euphronios",
@@ -621,7 +624,7 @@ def create_training_data():
     ).with_inputs("text", "spacy_entities", "spacy_relationships"))
     
     # ========================================================================
-    # Example 3: Museum acquisition + Network relationships
+    # Training Example 3
     # ========================================================================
     text3 = "The J. Paul Getty Museum acquired the krater through Hecht in 1972 for $1 million. The museum's curator was Marion True."
     spacy_result3 = spacy_extractor.extract(text3)
@@ -714,7 +717,7 @@ def create_training_data():
     ).with_inputs("text", "spacy_entities", "spacy_relationships"))
     
     # ========================================================================
-    # Example 4: Law enforcement action + Evidence
+    # Training Example 4
     # ========================================================================
     text4 = "In 1995, Italian authorities raided Medici's warehouse in the Geneva Freeport. They seized 3,800 photographs of looted artifacts."
     spacy_result4 = spacy_extractor.extract(text4)
@@ -799,11 +802,478 @@ def create_training_data():
     return entity_examples, relationship_examples
 
 # ============================================================================
-# Metrics
+# Test Data (held-out) - Same Complex Schema
 # ============================================================================
 
+def create_test_data():
+    """Held-out test examples with sophisticated schema - 6 examples."""
+    
+    spacy_extractor = SpacyExtractor()
+    
+    entity_examples = []
+    relationship_examples = []
+    
+    # ========================================================================
+    # Test Example 1: New dealer network
+    # ========================================================================
+    text1 = "Robin Symes operated an antiquities gallery in London during the 1980s. He frequently sold artifacts to the Metropolitan Museum. Symes collaborated with Christos Michaelides in their dealing operations."
+    spacy_result1 = spacy_extractor.extract(text1)
+    
+    gold_entities1 = [
+        {
+            "canonical_id": "robin_symes",
+            "full_name": "Robin Symes",
+            "type": "PERSON",
+            "mentions": ["Robin Symes", "Symes", "He"],
+            "attributes": {
+                "role": "dealer",
+                "nationality": "British"
+            }
+        },
+        {
+            "canonical_id": "london",
+            "type": "LOCATION",
+            "mentions": ["London"],
+            "attributes": {
+                "location_type": "city",
+                "country": "UK",
+                "significance": "gallery_location"
+            }
+        },
+        {
+            "canonical_id": "metropolitan_museum",
+            "full_name": "Metropolitan Museum of Art",
+            "type": "ORGANIZATION",
+            "mentions": ["Metropolitan Museum"],
+            "attributes": {
+                "entity_type": "museum",
+                "location": "New York"
+            }
+        },
+        {
+            "canonical_id": "christos_michaelides",
+            "full_name": "Christos Michaelides",
+            "type": "PERSON",
+            "mentions": ["Christos Michaelides"],
+            "attributes": {
+                "role": "dealer",
+                "partnership": "robin_symes"
+            }
+        }
+    ]
+    
+    gold_relationships1 = [
+        {
+            "source_id": "robin_symes",
+            "target_id": "london",
+            "relation_type": "operated_in",
+            "attributes": {
+                "date": "1980s",
+                "facility": "gallery"
+            }
+        },
+        {
+            "source_id": "robin_symes",
+            "target_id": "metropolitan_museum",
+            "relation_type": "sold_to",
+            "attributes": {
+                "frequency": "frequently",
+                "items": "artifacts"
+            }
+        },
+        {
+            "source_id": "robin_symes",
+            "target_id": "christos_michaelides",
+            "relation_type": "collaborated_with",
+            "attributes": {
+                "activity": "dealing operations"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text1,
+        spacy_entities=json.dumps(spacy_result1["entities"]),
+        expected_entities=gold_entities1
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text1,
+        spacy_entities=json.dumps(spacy_result1["entities"]),
+        spacy_relationships=json.dumps(spacy_result1["relationships"]),
+        expected_relationships=gold_relationships1
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    # ========================================================================
+    # Test Example 2: Curator involvement
+    # ========================================================================
+    text2 = "Marion True served as antiquities curator at the Getty Museum from 1986 to 2005. She approved numerous acquisitions from questionable sources. In 2005, True resigned amid scandal."
+    spacy_result2 = spacy_extractor.extract(text2)
+    
+    gold_entities2 = [
+        {
+            "canonical_id": "marion_true",
+            "full_name": "Marion True",
+            "type": "PERSON",
+            "mentions": ["Marion True", "True", "She"],
+            "attributes": {
+                "role": "curator",
+                "affiliation": "j_paul_getty_museum"
+            }
+        },
+        {
+            "canonical_id": "j_paul_getty_museum",
+            "full_name": "J. Paul Getty Museum",
+            "type": "ORGANIZATION",
+            "mentions": ["Getty Museum"],
+            "attributes": {
+                "entity_type": "museum",
+                "location": "Los Angeles"
+            }
+        }
+    ]
+    
+    gold_relationships2 = [
+        {
+            "source_id": "marion_true",
+            "target_id": "j_paul_getty_museum",
+            "relation_type": "employed_by",
+            "attributes": {
+                "role": "antiquities curator",
+                "start_date": "1986",
+                "end_date": "2005"
+            }
+        },
+        {
+            "source_id": "marion_true",
+            "target_id": "marion_true",
+            "relation_type": "resigned",
+            "attributes": {
+                "date": "2005",
+                "reason": "scandal"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text2,
+        spacy_entities=json.dumps(spacy_result2["entities"]),
+        expected_entities=gold_entities2
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text2,
+        spacy_entities=json.dumps(spacy_result2["entities"]),
+        spacy_relationships=json.dumps(spacy_result2["relationships"]),
+        expected_relationships=gold_relationships2
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    # ========================================================================
+    # Test Example 3: Auction house
+    # ========================================================================
+    text3 = "Sotheby's auctioned the Lydian Hoard in New York in 1987. The artifacts were later determined to have been illegally excavated from Turkey."
+    spacy_result3 = spacy_extractor.extract(text3)
+    
+    gold_entities3 = [
+        {
+            "canonical_id": "sothebys",
+            "full_name": "Sotheby's",
+            "type": "ORGANIZATION",
+            "mentions": ["Sotheby's"],
+            "attributes": {
+                "entity_type": "auction_house"
+            }
+        },
+        {
+            "canonical_id": "lydian_hoard",
+            "full_name": "Lydian Hoard",
+            "type": "ARTIFACT",
+            "mentions": ["Lydian Hoard", "The artifacts"],
+            "attributes": {
+                "object_type": "collection",
+                "legal_status": "looted",
+                "origin": "Turkey"
+            }
+        },
+        {
+            "canonical_id": "new_york",
+            "type": "LOCATION",
+            "mentions": ["New York"],
+            "attributes": {
+                "location_type": "city",
+                "country": "USA"
+            }
+        },
+        {
+            "canonical_id": "turkey",
+            "type": "LOCATION",
+            "mentions": ["Turkey"],
+            "attributes": {
+                "location_type": "country",
+                "significance": "origin_country"
+            }
+        }
+    ]
+    
+    gold_relationships3 = [
+        {
+            "source_id": "sothebys",
+            "target_id": "lydian_hoard",
+            "relation_type": "auctioned",
+            "attributes": {
+                "date": "1987",
+                "location": "new_york"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text3,
+        spacy_entities=json.dumps(spacy_result3["entities"]),
+        expected_entities=gold_entities3
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text3,
+        spacy_entities=json.dumps(spacy_result3["entities"]),
+        spacy_relationships=json.dumps(spacy_result3["relationships"]),
+        expected_relationships=gold_relationships3
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    # ========================================================================
+    # Test Example 4: Repatriation
+    # ========================================================================
+    text4 = "In 2008, Italy successfully negotiated the return of the Morgantina silver from the Metropolitan Museum. The museum repatriated the treasure to Sicily."
+    spacy_result4 = spacy_extractor.extract(text4)
+    
+    gold_entities4 = [
+        {
+            "canonical_id": "italy",
+            "type": "LOCATION",
+            "mentions": ["Italy"],
+            "attributes": {
+                "location_type": "country",
+                "significance": "origin_country"
+            }
+        },
+        {
+            "canonical_id": "morgantina_silver",
+            "full_name": "Morgantina silver",
+            "type": "ARTIFACT",
+            "mentions": ["Morgantina silver", "the treasure"],
+            "attributes": {
+                "object_type": "silver_hoard",
+                "origin": "Sicily"
+            }
+        },
+        {
+            "canonical_id": "metropolitan_museum",
+            "full_name": "Metropolitan Museum of Art",
+            "type": "ORGANIZATION",
+            "mentions": ["Metropolitan Museum", "The museum"],
+            "attributes": {
+                "entity_type": "museum",
+                "location": "New York"
+            }
+        },
+        {
+            "canonical_id": "sicily",
+            "type": "LOCATION",
+            "mentions": ["Sicily"],
+            "attributes": {
+                "location_type": "region",
+                "country": "Italy"
+            }
+        }
+    ]
+    
+    gold_relationships4 = [
+        {
+            "source_id": "italy",
+            "target_id": "morgantina_silver",
+            "relation_type": "negotiated_return",
+            "attributes": {
+                "date": "2008",
+                "from": "metropolitan_museum"
+            }
+        },
+        {
+            "source_id": "metropolitan_museum",
+            "target_id": "morgantina_silver",
+            "relation_type": "repatriated",
+            "attributes": {
+                "destination": "sicily",
+                "date": "2008"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text4,
+        spacy_entities=json.dumps(spacy_result4["entities"]),
+        expected_entities=gold_entities4
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text4,
+        spacy_entities=json.dumps(spacy_result4["entities"]),
+        spacy_relationships=json.dumps(spacy_result4["relationships"]),
+        expected_relationships=gold_relationships4
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    # ========================================================================
+    # Test Example 5: Legal conviction
+    # ========================================================================
+    text5 = "In 2004, an Italian court convicted Medici of conspiracy to traffic looted antiquities. He received a ten-year sentence and a fine."
+    spacy_result5 = spacy_extractor.extract(text5)
+    
+    gold_entities5 = [
+        {
+            "canonical_id": "italian_court",
+            "type": "ORGANIZATION",
+            "mentions": ["Italian court"],
+            "attributes": {
+                "entity_type": "law_enforcement",
+                "jurisdiction": "Italy"
+            }
+        },
+        {
+            "canonical_id": "giacomo_medici",
+            "full_name": "Giacomo Medici",
+            "type": "PERSON",
+            "mentions": ["Medici", "He"],
+            "attributes": {
+                "role": "dealer"
+            }
+        }
+    ]
+    
+    gold_relationships5 = [
+        {
+            "source_id": "italian_court",
+            "target_id": "giacomo_medici",
+            "relation_type": "convicted",
+            "attributes": {
+                "date": "2004",
+                "charge": "conspiracy to traffic looted antiquities",
+                "sentence": "ten-year sentence and fine"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text5,
+        spacy_entities=json.dumps(spacy_result5["entities"]),
+        expected_entities=gold_entities5
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text5,
+        spacy_entities=json.dumps(spacy_result5["entities"]),
+        spacy_relationships=json.dumps(spacy_result5["relationships"]),
+        expected_relationships=gold_relationships5
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    # ========================================================================
+    # Test Example 6: Complex multi-party transaction
+    # ========================================================================
+    text6 = "Frieda Tchacos acquired the Gospel of Judas from Egyptian antiquities dealers. She attempted to sell it through Sotheby's but withdrew it. Tchacos eventually donated the manuscript to the National Geographic Society."
+    spacy_result6 = spacy_extractor.extract(text6)
+    
+    gold_entities6 = [
+        {
+            "canonical_id": "frieda_tchacos",
+            "full_name": "Frieda Tchacos",
+            "type": "PERSON",
+            "mentions": ["Frieda Tchacos", "Tchacos", "She"],
+            "attributes": {
+                "role": "dealer"
+            }
+        },
+        {
+            "canonical_id": "gospel_of_judas",
+            "full_name": "Gospel of Judas",
+            "type": "ARTIFACT",
+            "mentions": ["Gospel of Judas", "it", "the manuscript"],
+            "attributes": {
+                "object_type": "manuscript",
+                "origin": "Egypt"
+            }
+        },
+        {
+            "canonical_id": "egyptian_antiquities_dealers",
+            "type": "PERSON",
+            "mentions": ["Egyptian antiquities dealers"],
+            "attributes": {
+                "role": "dealer",
+                "nationality": "Egyptian"
+            }
+        },
+        {
+            "canonical_id": "sothebys",
+            "full_name": "Sotheby's",
+            "type": "ORGANIZATION",
+            "mentions": ["Sotheby's"],
+            "attributes": {
+                "entity_type": "auction_house"
+            }
+        },
+        {
+            "canonical_id": "national_geographic_society",
+            "full_name": "National Geographic Society",
+            "type": "ORGANIZATION",
+            "mentions": ["National Geographic Society"],
+            "attributes": {
+                "entity_type": "cultural_institution"
+            }
+        }
+    ]
+    
+    gold_relationships6 = [
+        {
+            "source_id": "frieda_tchacos",
+            "target_id": "gospel_of_judas",
+            "relation_type": "acquired",
+            "attributes": {
+                "source": "egyptian_antiquities_dealers"
+            }
+        },
+        {
+            "source_id": "frieda_tchacos",
+            "target_id": "gospel_of_judas",
+            "relation_type": "attempted_sale",
+            "attributes": {
+                "venue": "sothebys",
+                "outcome": "withdrawn"
+            }
+        },
+        {
+            "source_id": "frieda_tchacos",
+            "target_id": "national_geographic_society",
+            "relation_type": "donated_to",
+            "attributes": {
+                "item": "gospel_of_judas"
+            }
+        }
+    ]
+    
+    entity_examples.append(dspy.Example(
+        text=text6,
+        spacy_entities=json.dumps(spacy_result6["entities"]),
+        expected_entities=gold_entities6
+    ).with_inputs("text", "spacy_entities"))
+    
+    relationship_examples.append(dspy.Example(
+        text=text6,
+        spacy_entities=json.dumps(spacy_result6["entities"]),
+        spacy_relationships=json.dumps(spacy_result6["relationships"]),
+        expected_relationships=gold_relationships6
+    ).with_inputs("text", "spacy_entities", "spacy_relationships"))
+    
+    return entity_examples, relationship_examples
+
 # ============================================================================
-# Updated Metrics (Match new gold standard schema)
+# Metrics
 # ============================================================================
 
 def entity_refinement_metric(example: dspy.Example, prediction: dspy.Prediction, trace=None) -> float:
@@ -907,6 +1377,56 @@ def relationship_refinement_metric(example: dspy.Example, prediction: dspy.Predi
     f1 = 2 * (precision * recall) / (precision + recall)
     return f1
 
+def evaluate_on_dataset(refiner, dataset, metric, task_name="Task"):
+    """Evaluate a refiner on a dataset and return detailed results."""
+    
+    print(f"\n{'='*80}")
+    print(f"EVALUATING: {task_name}")
+    print(f"{'='*80}")
+    
+    scores = []
+    results = []
+    
+    for i, example in enumerate(dataset):
+        # Get input fields
+        if hasattr(example, '_input_keys'):
+            input_keys = example._input_keys
+        else:
+            input_keys = [k for k in example.__dict__.keys() 
+                         if not k.startswith('_') and not k.startswith('expected_')]
+        
+        # Build kwargs
+        kwargs = {key: getattr(example, key) for key in input_keys}
+        
+        # Run prediction
+        pred = refiner(**kwargs)
+        
+        # Calculate score
+        score = metric(example, pred)
+        scores.append(score)
+        
+        results.append({
+            'text': example.text,
+            'score': score,
+            'prediction': pred
+        })
+        
+        print(f"  Example {i+1}: F1={score:.3f}")
+    
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+    
+    print(f"\n{'='*80}")
+    print(f"  Average F1: {avg_score:.3f}")
+    print(f"  Min F1: {min(scores):.3f}")
+    print(f"  Max F1: {max(scores):.3f}")
+    print(f"{'='*80}")
+    
+    return {
+        'average': avg_score,
+        'scores': scores,
+        'results': results
+    }
+
 # ============================================================================
 # Custom Optimizer
 # ============================================================================
@@ -975,7 +1495,7 @@ class SimpleBootstrap:
 
 def main():
     print("=" * 80)
-    print("Two-Stage KG: spaCy → LLM Refinement (Custom Modules)")
+    print("Two-Stage KG Extraction: Proper Train/Test Evaluation")
     print("=" * 80)
     
     # Load models
@@ -986,10 +1506,18 @@ def main():
     
     print(f"\n📦 Models: {[m.name for m in LOCAL_MODELS]}")
     
-    # Create training data
-    print("\n📚 Creating training data...")
-    entity_dataset, relationship_dataset = create_training_data()
-    print(f"✅ {len(entity_dataset)} entity examples, {len(relationship_dataset)} relationship examples")
+    # Create SEPARATE training and test data
+    print("\n📚 Creating datasets...")
+    print("  - Training data (for optimization)...")
+    train_entity_dataset, train_relationship_dataset = create_training_data()
+    print(f"    ✅ {len(train_entity_dataset)} entity examples, {len(train_relationship_dataset)} relationship examples")
+    
+    print("  - Test data (held-out for evaluation)...")
+    test_entity_dataset, test_relationship_dataset = create_test_data()
+    print(f"    ✅ {len(test_entity_dataset)} entity examples, {len(test_relationship_dataset)} relationship examples")
+    
+    # Results storage
+    all_results = {}
     
     # Optimize for each model
     for model_config in LOCAL_MODELS:
@@ -1000,149 +1528,182 @@ def main():
         lm = LocalLLM(model_config)
         dspy.settings.configure(lm=lm)
         
-        # ENTITY REFINEMENT
-        print("\n🔧 Entity refinement optimization...")
-        entity_refiner = CustomRefiner(
-            task_description=    
-"""
-Review spaCy entities and refine them into canonical form.
-
-For each entity:
-1. Assign a canonical_id (lowercase_underscore format).
-2. Provide full_name if known.
-3. Set type.  The 'type' value *must* be one of these: PERSON, ORGANIZATION, ARTIFACT, LOCATION.
-4. List all mentions found in text.
-5. Add attributes (role, entity_type, etc.) that describe important properties.
-   For example, for a PERSON, include 'role' (e.g., "dealer"), 'nationality'.  For a LOCATION, include 'location_type' (e.g., "city", "country").
-
-Return *only* a valid JSON array. Each object in the array should represent an entity. 
-The JSON objects must have the keys: "canonical_id", "full_name", "type", "mentions", "attributes".
-The "attributes" value should be a JSON object (a dictionary).
-Do *not* include any other text or tokens (like <|end_of_turn|>).
-
-Here's an example of the *expected output format*:
-[
-  {
-    "canonical_id": "giacomo_medici",
-    "full_name": "Giacomo Medici",
-    "type": "PERSON",
-    "mentions": ["Giacomo Medici", "Medici"],
-    "attributes": {"role": "dealer", "nationality": "Italian"}
-  },
-  {
-    "canonical_id": "italy",
-    "full_name": "Italy",
-    "type": "LOCATION",
-    "mentions": ["Italy"],
-    "attributes": {"location_type": "country", "significance": "jurisdiction"}
-  }
-]
-
-Follow this format *exactly*.
-
-""",
-            output_field_name="refined_entities"
-)
+        model_results = {}
         
+        # ====================================================================
+        # ENTITY REFINEMENT
+        # ====================================================================
+        print("\n" + "─" * 80)
+        print("ENTITY REFINEMENT")
+        print("─" * 80)
+        
+        # Create baseline (no optimization)
+        print("\n📝 Creating baseline entity refiner...")
+        baseline_entity_refiner = CustomRefiner(
+            task_description="""Convert spaCy entities to JSON format.
+
+Each entity needs:
+- canonical_id: lowercase with underscores
+- type: PERSON, ORGANIZATION, ARTIFACT, or LOCATION
+- role: (optional) for PERSON entities
+
+Return ONLY a JSON array like:
+[{"canonical_id": "giacomo_medici", "type": "PERSON", "role": "dealer"}]""",
+            output_field_name="refined_entities"
+        )
+        
+        # Evaluate baseline on test set
+        print("\n📊 Baseline evaluation on TEST set...")
+        baseline_entity_results = evaluate_on_dataset(
+            baseline_entity_refiner,
+            test_entity_dataset,
+            entity_refinement_metric,
+            "Baseline Entity Refinement (Test Set)"
+        )
+        
+        # Optimize
+        print("\n🔧 Optimizing entity refiner on TRAINING set...")
         optimizer = SimpleBootstrap(
             metric=entity_refinement_metric,
             max_demos=2,
             threshold=0.3,
-            input_fields=['text', 'spacy_entities']  
-            )
-        
-        optimized_entity_refiner = optimizer.compile(entity_refiner, entity_dataset)
-
-        
-        # Test
-        print("\n  Testing optimized entity refiner...")
-        test_ex = entity_dataset[0]
-        test_pred = optimized_entity_refiner(
-            text=test_ex.text,
-            spacy_entities=test_ex.spacy_entities
+            input_fields=['text', 'spacy_entities']
         )
-        test_score = entity_refinement_metric(test_ex, test_pred)
-        print(f"  ✅ Test F1: {test_score:.3f}")
+        optimized_entity_refiner = optimizer.compile(baseline_entity_refiner, train_entity_dataset)
         
+        # Evaluate optimized on TRAINING set (sanity check)
+        print("\n📊 Optimized evaluation on TRAINING set (sanity check)...")
+        train_entity_results = evaluate_on_dataset(
+            optimized_entity_refiner,
+            train_entity_dataset,
+            entity_refinement_metric,
+            "Optimized Entity Refinement (Training Set)"
+        )
+        
+        # Evaluate optimized on TEST set (the real metric!)
+        print("\n📊 Optimized evaluation on TEST set (GENERALIZATION)...")
+        test_entity_results = evaluate_on_dataset(
+            optimized_entity_refiner,
+            test_entity_dataset,
+            entity_refinement_metric,
+            "Optimized Entity Refinement (Test Set)"
+        )
+        
+        model_results['entity'] = {
+            'baseline_test': baseline_entity_results['average'],
+            'optimized_train': train_entity_results['average'],
+            'optimized_test': test_entity_results['average'],
+            'improvement': test_entity_results['average'] - baseline_entity_results['average']
+        }
+        
+        # ====================================================================
         # RELATIONSHIP REFINEMENT
-        print("\n🔧 Relationship refinement optimization...")
-        rel_refiner = CustomRefiner(
-            task_description="""Review spaCy relationships and refine them into canonical form.
-
-For each relationship:
-1. Use source_id and target_id (canonical entity IDs)
-2. Set relation_type (met, sold_to, acquired, etc.)
-3. Add attributes (date, amount, location, etc.)
-
-Return JSON array with structure:
-{
-  "source_id": "giacomo_medici",
-  "target_id": "robert_hecht",
-  "relation_type": "met",
-  "attributes": {"date": "1967"}
-}""",
-             output_field_name="refined_relationships"
-)
+        # ====================================================================
+        print("\n" + "─" * 80)
+        print("RELATIONSHIP REFINEMENT")
+        print("─" * 80)
         
+        # Create baseline
+        print("\n📝 Creating baseline relationship refiner...")
+        baseline_rel_refiner = CustomRefiner(
+            task_description="""Convert spaCy relationships to JSON format.
+
+Each relationship needs:
+- source_id: canonical ID of source entity
+- target_id: canonical ID of target entity
+- relation_type: type of relationship
+
+Return ONLY a JSON array like:
+[{"source_id": "giacomo_medici", "target_id": "robert_hecht", "relation_type": "met"}]""",
+            output_field_name="refined_relationships"
+        )
+        
+        # Evaluate baseline on test set
+        print("\n📊 Baseline evaluation on TEST set...")
+        baseline_rel_results = evaluate_on_dataset(
+            baseline_rel_refiner,
+            test_relationship_dataset,
+            relationship_refinement_metric,
+            "Baseline Relationship Refinement (Test Set)"
+        )
+        
+        # Optimize
+        print("\n🔧 Optimizing relationship refiner on TRAINING set...")
         optimizer = SimpleBootstrap(
             metric=relationship_refinement_metric,
             max_demos=2,
             threshold=0.3,
-            input_fields=['text', 'spacy_entities', 'spacy_relationships'] 
-            )
-
-        optimized_rel_refiner = optimizer.compile(rel_refiner, relationship_dataset)
-        
-        # Test
-        print("\n  Testing optimized relationship refiner...")
-        test_ex = relationship_dataset[0]
-        test_pred = optimized_rel_refiner(
-            text=test_ex.text,
-            spacy_entities=test_ex.spacy_entities,
-            spacy_relationships=test_ex.spacy_relationships
+            input_fields=['text', 'spacy_entities', 'spacy_relationships']
         )
-        test_score = relationship_refinement_metric(test_ex, test_pred)
-        print(f"  ✅ Test F1: {test_score:.3f}")
+        optimized_rel_refiner = optimizer.compile(baseline_rel_refiner, train_relationship_dataset)
         
-        print(f"\n✅ {model_config.name} optimization complete!")
-        print(f"   Entity refiner has {len(optimized_entity_refiner.demos)} demos")
-        print(f"   Relationship refiner has {len(optimized_rel_refiner.demos)} demos")
-
-           # After optimization completes:
+        # Evaluate optimized on TRAINING set (sanity check)
+        print("\n📊 Optimized evaluation on TRAINING set (sanity check)...")
+        train_rel_results = evaluate_on_dataset(
+            optimized_rel_refiner,
+            train_relationship_dataset,
+            relationship_refinement_metric,
+            "Optimized Relationship Refinement (Training Set)"
+        )
+        
+        # Evaluate optimized on TEST set
+        print("\n📊 Optimized evaluation on TEST set (GENERALIZATION)...")
+        test_rel_results = evaluate_on_dataset(
+            optimized_rel_refiner,
+            test_relationship_dataset,
+            relationship_refinement_metric,
+            "Optimized Relationship Refinement (Test Set)"
+        )
+        
+        model_results['relationship'] = {
+            'baseline_test': baseline_rel_results['average'],
+            'optimized_train': train_rel_results['average'],
+            'optimized_test': test_rel_results['average'],
+            'improvement': test_rel_results['average'] - baseline_rel_results['average']
+        }
+        
+        all_results[model_config.name] = model_results
+    
+    # ========================================================================
+    # FINAL SUMMARY
+    # ========================================================================
     print("\n" + "=" * 80)
-    print("PROMPT INSPECTION")
+    print("FINAL RESULTS SUMMARY")
     print("=" * 80)
     
-    # Inspect entity refiner
-    print(f"\n✨ Entity Refiner: {len(optimized_entity_refiner.demos)} demos added")
-    test_entity_prompt = optimized_entity_refiner._build_prompt(
-        text=entity_dataset[0].text,
-        spacy_entities=entity_dataset[0].spacy_entities
-    )
-    print(f"\nSample prompt length: {len(test_entity_prompt)} chars")
-    print("\nFirst 1000 characters of prompt:")
-    print("-" * 80)
-    print(test_entity_prompt[:1000])
-    print("...")
-    
-    # Save full prompts
-    with open(f"optimized_prompts_{model_config.name}.txt", "w") as f:
-        f.write("ENTITY REFINEMENT PROMPT\n")
-        f.write("=" * 80 + "\n")
-        f.write(test_entity_prompt)
-        f.write("\n\n")
+    for model_name, results in all_results.items():
+        print(f"\n{'='*80}")
+        print(f"📊 {model_name}")
+        print(f"{'='*80}")
         
-        test_rel_prompt = optimized_rel_refiner._build_prompt(
-            text=relationship_dataset[0].text,
-            spacy_entities=relationship_dataset[0].spacy_entities,
-            spacy_relationships=relationship_dataset[0].spacy_relationships
-        )
+        print(f"\n  ENTITY REFINEMENT:")
+        print(f"    Baseline (Test):     {results['entity']['baseline_test']:.3f}")
+        print(f"    Optimized (Train):   {results['entity']['optimized_train']:.3f}")
+        print(f"    Optimized (Test):    {results['entity']['optimized_test']:.3f}")
+        print(f"    → Improvement:       {results['entity']['improvement']:+.3f}")
         
-        f.write("\n\nRELATIONSHIP REFINEMENT PROMPT\n")
-        f.write("=" * 80 + "\n")
-        f.write(test_rel_prompt)
+        print(f"\n  RELATIONSHIP REFINEMENT:")
+        print(f"    Baseline (Test):     {results['relationship']['baseline_test']:.3f}")
+        print(f"    Optimized (Train):   {results['relationship']['optimized_train']:.3f}")
+        print(f"    Optimized (Test):    {results['relationship']['optimized_test']:.3f}")
+        print(f"    → Improvement:       {results['relationship']['improvement']:+.3f}")
+        
+        # Overfitting check
+        entity_overfit = results['entity']['optimized_train'] - results['entity']['optimized_test']
+        rel_overfit = results['relationship']['optimized_train'] - results['relationship']['optimized_test']
+        
+        print(f"\n  OVERFITTING CHECK:")
+        print(f"    Entity gap (train-test):        {entity_overfit:+.3f}")
+        print(f"    Relationship gap (train-test):  {rel_overfit:+.3f}")
+        
+        if entity_overfit > 0.2 or rel_overfit > 0.2:
+            print(f"    ⚠️  Warning: Possible overfitting detected!")
+        else:
+            print(f"    ✅ Good generalization")
     
-    print(f"\n✅ Full prompts saved to: optimized_prompts_{model_config.name}.txt")
+    print("\n" + "=" * 80)
+    print("✅ Evaluation complete!")
+    print("=" * 80)
 
 if __name__ == "__main__":
     main()
