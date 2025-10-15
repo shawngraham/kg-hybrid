@@ -85,7 +85,7 @@ class LocalLLM(dspy.LM):
             )
             
             content = response.json()["choices"][0]["message"]["content"]
-            print(f"Raw LLM response: {content}")
+            #print(f"Raw LLM response: {content}")
             self.history.append({'prompt': prompt, 'response': content})
             return content
 
@@ -94,29 +94,90 @@ class LocalLLM(dspy.LM):
             return "[]"
 
 # ============================================================================
-# JSON Extractor
+# IMPROVED JSON Extractor with better debugging
 # ============================================================================
 
 class JSONExtractor:
     """Extract JSON from LLM responses."""
     
     @staticmethod
-    def extract(text: str) -> list:
+    def extract(text: str, debug=False) -> list:
         if isinstance(text, list):
             return text
         
+        if debug:
+            print(f"\n🔍 JSONExtractor DEBUG:")
+            print(f"  Raw input length: {len(text)}")
+            print(f"  First 200 chars: {text[:200]}")
+            print(f"  Last 200 chars: {text[-200:]}")
+        
+        # Remove markdown code blocks
         text = re.sub(r'```json\s*', '', text)
         text = re.sub(r'```\s*', '', text)
-        #Remove end_of_turn
-        text = re.sub(r'<\|end_of_turn\|>\s*$', '', text) # Add this line
+        
+        # Remove various end tokens (be more aggressive)
+        text = re.sub(r'<\|end_of_turn\|>', '', text)
+        text = re.sub(r'<\|file_separator\|>', '', text)
+        text = re.sub(r'<\|im_end\|>', '', text)
+        text = re.sub(r'</s>', '', text)
+        text = re.sub(r'<eos>', '', text)
+        
+        if debug:
+            print(f"  After cleanup: {text[:200]}")
+        
+        # Try multiple strategies to find JSON
+        
+        # Strategy 1: Non-greedy match (original)
         match = re.search(r'(\[.*?\])', text, re.DOTALL)
         if match:
             try:
                 parsed = json.loads(match.group(1))
+                if debug:
+                    print(f"  ✓ Strategy 1 worked: {len(parsed)} items")
                 return parsed if isinstance(parsed, list) else []
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                if debug:
+                    print(f"  ✗ Strategy 1 failed: {e}")
         
+        # Strategy 2: Greedy match (get everything between first [ and last ])
+        match = re.search(r'(\[.*\])', text, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(1))
+                if debug:
+                    print(f"  ✓ Strategy 2 worked: {len(parsed)} items")
+                return parsed if isinstance(parsed, list) else []
+            except json.JSONDecodeError as e:
+                if debug:
+                    print(f"  ✗ Strategy 2 failed: {e}")
+        
+        # Strategy 3: Find balanced brackets
+        if '[' in text:
+            start = text.index('[')
+            bracket_count = 0
+            end = start
+            for i in range(start, len(text)):
+                if text[i] == '[':
+                    bracket_count += 1
+                elif text[i] == ']':
+                    bracket_count -= 1
+                    if bracket_count == 0:
+                        end = i + 1
+                        break
+            
+            if end > start:
+                try:
+                    json_str = text[start:end]
+                    parsed = json.loads(json_str)
+                    if debug:
+                        print(f"  ✓ Strategy 3 worked: {len(parsed)} items")
+                    return parsed if isinstance(parsed, list) else []
+                except json.JSONDecodeError as e:
+                    if debug:
+                        print(f"  ✗ Strategy 3 failed: {e}")
+        
+        if debug:
+            print(f"  ✗ All strategies failed")
         return []
 
 # ============================================================================
@@ -334,10 +395,10 @@ class CustomRefiner(dspy.Module):
         try:
             prompt = self._build_prompt(**kwargs)
             raw_response = dspy.settings.lm(prompt)
-            
+            #print(f"✅ CustomRefiner.forward raw_response: {raw_response}")
             # Parse JSON from raw response
             parsed_output = self.json_extractor.extract(raw_response)
-            
+
             # Return prediction
             result = dspy.Prediction(**{self.output_field_name: parsed_output})
             
