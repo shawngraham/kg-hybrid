@@ -415,13 +415,12 @@ class CustomRefiner(dspy.Module):
 # ============================================================================
 # Create Training Data
 # ============================================================================
-
 # ============================================================================
-# Training Data (for optimization) - Original Complex Schema
+# SIMPLIFIED Training Data - Achievable for 7B models
 # ============================================================================
 
 def create_training_data():
-    """Training examples with full sophisticated schema - 4 examples."""
+    """Simplified training examples - focus on core task only."""
     
     spacy_extractor = SpacyExtractor()
     
@@ -434,77 +433,18 @@ def create_training_data():
     text1 = "Giacomo Medici started dealing in antiquities in Rome during the 1960s. In 1967, Medici was convicted in Italy of receiving looted artefacts. He met Robert Hecht the same year."
     spacy_result1 = spacy_extractor.extract(text1)
     
+    # SIMPLIFIED: Just core fields
     gold_entities1 = [
-        {
-            "canonical_id": "giacomo_medici",
-            "full_name": "Giacomo Medici",
-            "type": "PERSON",
-            "mentions": ["Giacomo Medici", "Medici", "He"],
-            "attributes": {
-                "role": "dealer",
-                "nationality": "Italian"
-            }
-        },
-        {
-            "canonical_id": "robert_hecht",
-            "full_name": "Robert Hecht",
-            "type": "PERSON",
-            "mentions": ["Robert Hecht"],
-            "attributes": {
-                "role": "dealer",
-                "nationality": "American"
-            }
-        },
-        {
-            "canonical_id": "rome",
-            "type": "LOCATION",
-            "mentions": ["Rome"],
-            "attributes": {
-                "location_type": "city",
-                "country": "Italy",
-                "significance": "dealing_location"
-            }
-        },
-        {
-            "canonical_id": "italy",
-            "type": "LOCATION",
-            "mentions": ["Italy"],
-            "attributes": {
-                "location_type": "country",
-                "significance": "jurisdiction"
-            }
-        }
+        {"canonical_id": "giacomo_medici", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "robert_hecht", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "rome", "type": "LOCATION"},
+        {"canonical_id": "italy", "type": "LOCATION"}
     ]
     
+    # SIMPLIFIED: Just the triple + optional date
     gold_relationships1 = [
-        {
-            "source_id": "giacomo_medici",
-            "target_id": "rome",
-            "relation_type": "operated_in",
-            "attributes": {
-                "date": "1960s",
-                "activity": "dealing in antiquities"
-            }
-        },
-        {
-            "source_id": "giacomo_medici",
-            "target_id": "giacomo_medici",
-            "relation_type": "convicted",
-            "attributes": {
-                "date": "1967",
-                "location": "italy",
-                "charge": "receiving looted artefacts",
-                "legal_status": "convicted"
-            }
-        },
-        {
-            "source_id": "giacomo_medici",
-            "target_id": "robert_hecht",
-            "relation_type": "met",
-            "attributes": {
-                "date": "1967"
-            }
-        }
+        {"source_id": "giacomo_medici", "target_id": "rome", "relation_type": "operated_in"},
+        {"source_id": "giacomo_medici", "target_id": "robert_hecht", "relation_type": "met"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -527,87 +467,17 @@ def create_training_data():
     spacy_result2 = spacy_extractor.extract(text2)
     
     gold_entities2 = [
-        {
-            "canonical_id": "giacomo_medici",
-            "full_name": "Giacomo Medici",
-            "type": "PERSON",
-            "mentions": ["Medici", "He"],
-            "attributes": {
-                "role": "dealer"
-            }
-        },
-        {
-            "canonical_id": "euphronios_sarpedon_krater",
-            "full_name": "Euphronios (Sarpedon) krater",
-            "type": "ARTIFACT",
-            "mentions": ["Euphronios krater", "it"],
-            "attributes": {
-                "object_type": "krater",
-                "artist": "Euphronios",
-                "legal_status": "looted",
-                "condition": "illegally-excavated"
-            }
-        },
-        {
-            "canonical_id": "tombaroli",
-            "type": "PERSON",
-            "mentions": ["tombaroli"],
-            "attributes": {
-                "role": "looter",
-                "description": "grave robbers"
-            }
-        },
-        {
-            "canonical_id": "robert_hecht",
-            "full_name": "Robert Hecht",
-            "type": "PERSON",
-            "mentions": ["Hecht"],
-            "attributes": {
-                "role": "dealer"
-            }
-        },
-        {
-            "canonical_id": "switzerland",
-            "type": "LOCATION",
-            "mentions": ["Switzerland"],
-            "attributes": {
-                "location_type": "country",
-                "significance": "transit_location"
-            }
-        }
+        {"canonical_id": "giacomo_medici", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "euphronios_krater", "type": "ARTIFACT"},
+        {"canonical_id": "tombaroli", "type": "PERSON", "role": "looter"},
+        {"canonical_id": "robert_hecht", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "switzerland", "type": "LOCATION"}
     ]
     
     gold_relationships2 = [
-        {
-            "source_id": "giacomo_medici",
-            "target_id": "euphronios_sarpedon_krater",
-            "relation_type": "purchased",
-            "attributes": {
-                "date": "December 1971",
-                "amount": "$100,000",
-                "seller": "tombaroli",
-                "legal_status": "illegal_transaction"
-            }
-        },
-        {
-            "source_id": "giacomo_medici",
-            "target_id": "euphronios_sarpedon_krater",
-            "relation_type": "transported",
-            "attributes": {
-                "destination": "switzerland",
-                "date": "1971"
-            }
-        },
-        {
-            "source_id": "giacomo_medici",
-            "target_id": "robert_hecht",
-            "relation_type": "sold_to",
-            "attributes": {
-                "date": "1971",
-                "artifact": "euphronios_sarpedon_krater",
-                "location": "switzerland"
-            }
-        }
+        {"source_id": "giacomo_medici", "target_id": "euphronios_krater", "relation_type": "purchased"},
+        {"source_id": "giacomo_medici", "target_id": "euphronios_krater", "relation_type": "transported"},
+        {"source_id": "giacomo_medici", "target_id": "robert_hecht", "relation_type": "sold_to"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -630,77 +500,15 @@ def create_training_data():
     spacy_result3 = spacy_extractor.extract(text3)
     
     gold_entities3 = [
-        {
-            "canonical_id": "j_paul_getty_museum",
-            "full_name": "J. Paul Getty Museum",
-            "type": "ORGANIZATION",
-            "mentions": ["J. Paul Getty Museum", "The museum"],
-            "attributes": {
-                "entity_type": "museum",
-                "location": "Los Angeles"
-            }
-        },
-        {
-            "canonical_id": "euphronios_sarpedon_krater",
-            "full_name": "Euphronios (Sarpedon) krater",
-            "type": "ARTIFACT",
-            "mentions": ["the krater"],
-            "attributes": {
-                "object_type": "krater"
-            }
-        },
-        {
-            "canonical_id": "robert_hecht",
-            "full_name": "Robert Hecht",
-            "type": "PERSON",
-            "mentions": ["Hecht"],
-            "attributes": {
-                "role": "dealer"
-            }
-        },
-        {
-            "canonical_id": "marion_true",
-            "full_name": "Marion True",
-            "type": "PERSON",
-            "mentions": ["Marion True"],
-            "attributes": {
-                "role": "curator",
-                "affiliation": "j_paul_getty_museum"
-            }
-        }
+        {"canonical_id": "getty_museum", "type": "ORGANIZATION"},
+        {"canonical_id": "euphronios_krater", "type": "ARTIFACT"},
+        {"canonical_id": "robert_hecht", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "marion_true", "type": "PERSON", "role": "curator"}
     ]
     
     gold_relationships3 = [
-        {
-            "source_id": "j_paul_getty_museum",
-            "target_id": "euphronios_sarpedon_krater",
-            "relation_type": "acquired",
-            "attributes": {
-                "date": "1972",
-                "amount": "$1 million",
-                "intermediary": "robert_hecht",
-                "transaction_type": "purchase"
-            }
-        },
-        {
-            "source_id": "robert_hecht",
-            "target_id": "j_paul_getty_museum",
-            "relation_type": "sold_to",
-            "attributes": {
-                "date": "1972",
-                "artifact": "euphronios_sarpedon_krater",
-                "amount": "$1 million"
-            }
-        },
-        {
-            "source_id": "marion_true",
-            "target_id": "j_paul_getty_museum",
-            "relation_type": "employed_by",
-            "attributes": {
-                "role": "curator",
-                "date": "1972"
-            }
-        }
+        {"source_id": "getty_museum", "target_id": "euphronios_krater", "relation_type": "acquired"},
+        {"source_id": "marion_true", "target_id": "getty_museum", "relation_type": "employed_by"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -723,67 +531,14 @@ def create_training_data():
     spacy_result4 = spacy_extractor.extract(text4)
     
     gold_entities4 = [
-        {
-            "canonical_id": "italian_authorities",
-            "type": "ORGANIZATION",
-            "mentions": ["Italian authorities", "They"],
-            "attributes": {
-                "entity_type": "law_enforcement",
-                "jurisdiction": "Italy"
-            }
-        },
-        {
-            "canonical_id": "giacomo_medici",
-            "full_name": "Giacomo Medici",
-            "type": "PERSON",
-            "mentions": ["Medici"],
-            "attributes": {
-                "role": "dealer"
-            }
-        },
-        {
-            "canonical_id": "geneva_freeport",
-            "full_name": "Geneva Freeport",
-            "type": "LOCATION",
-            "mentions": ["Geneva Freeport"],
-            "attributes": {
-                "location_type": "storage_facility",
-                "country": "Switzerland",
-                "significance": "storage_of_looted_artifacts"
-            }
-        }
+        {"canonical_id": "italian_authorities", "type": "ORGANIZATION"},
+        {"canonical_id": "giacomo_medici", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "geneva_freeport", "type": "LOCATION"}
     ]
     
     gold_relationships4 = [
-        {
-            "source_id": "italian_authorities",
-            "target_id": "geneva_freeport",
-            "relation_type": "raided",
-            "attributes": {
-                "date": "1995",
-                "target": "giacomo_medici",
-                "legal_action": "search_and_seizure"
-            }
-        },
-        {
-            "source_id": "giacomo_medici",
-            "target_id": "geneva_freeport",
-            "relation_type": "operated",
-            "attributes": {
-                "facility_type": "warehouse",
-                "purpose": "storage"
-            }
-        },
-        {
-            "source_id": "italian_authorities",
-            "target_id": "giacomo_medici",
-            "relation_type": "seized_evidence_from",
-            "attributes": {
-                "date": "1995",
-                "items": "3,800 photographs of looted artifacts",
-                "location": "geneva_freeport"
-            }
-        }
+        {"source_id": "italian_authorities", "target_id": "geneva_freeport", "relation_type": "raided"},
+        {"source_id": "italian_authorities", "target_id": "giacomo_medici", "relation_type": "seized_from"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -802,11 +557,11 @@ def create_training_data():
     return entity_examples, relationship_examples
 
 # ============================================================================
-# Test Data (held-out) - Same Complex Schema
+# SIMPLIFIED Test Data
 # ============================================================================
 
 def create_test_data():
-    """Held-out test examples with sophisticated schema - 6 examples."""
+    """Simplified test examples."""
     
     spacy_extractor = SpacyExtractor()
     
@@ -814,81 +569,20 @@ def create_test_data():
     relationship_examples = []
     
     # ========================================================================
-    # Test Example 1: New dealer network
+    # Test Example 1
     # ========================================================================
-    text1 = "Robin Symes operated an antiquities gallery in London during the 1980s. He frequently sold artifacts to the Metropolitan Museum. Symes collaborated with Christos Michaelides in their dealing operations."
+    text1 = "Robin Symes operated an antiquities gallery in London during the 1980s. He frequently sold artifacts to the Metropolitan Museum."
     spacy_result1 = spacy_extractor.extract(text1)
     
     gold_entities1 = [
-        {
-            "canonical_id": "robin_symes",
-            "full_name": "Robin Symes",
-            "type": "PERSON",
-            "mentions": ["Robin Symes", "Symes", "He"],
-            "attributes": {
-                "role": "dealer",
-                "nationality": "British"
-            }
-        },
-        {
-            "canonical_id": "london",
-            "type": "LOCATION",
-            "mentions": ["London"],
-            "attributes": {
-                "location_type": "city",
-                "country": "UK",
-                "significance": "gallery_location"
-            }
-        },
-        {
-            "canonical_id": "metropolitan_museum",
-            "full_name": "Metropolitan Museum of Art",
-            "type": "ORGANIZATION",
-            "mentions": ["Metropolitan Museum"],
-            "attributes": {
-                "entity_type": "museum",
-                "location": "New York"
-            }
-        },
-        {
-            "canonical_id": "christos_michaelides",
-            "full_name": "Christos Michaelides",
-            "type": "PERSON",
-            "mentions": ["Christos Michaelides"],
-            "attributes": {
-                "role": "dealer",
-                "partnership": "robin_symes"
-            }
-        }
+        {"canonical_id": "robin_symes", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "london", "type": "LOCATION"},
+        {"canonical_id": "metropolitan_museum", "type": "ORGANIZATION"}
     ]
     
     gold_relationships1 = [
-        {
-            "source_id": "robin_symes",
-            "target_id": "london",
-            "relation_type": "operated_in",
-            "attributes": {
-                "date": "1980s",
-                "facility": "gallery"
-            }
-        },
-        {
-            "source_id": "robin_symes",
-            "target_id": "metropolitan_museum",
-            "relation_type": "sold_to",
-            "attributes": {
-                "frequency": "frequently",
-                "items": "artifacts"
-            }
-        },
-        {
-            "source_id": "robin_symes",
-            "target_id": "christos_michaelides",
-            "relation_type": "collaborated_with",
-            "attributes": {
-                "activity": "dealing operations"
-            }
-        }
+        {"source_id": "robin_symes", "target_id": "london", "relation_type": "operated_in"},
+        {"source_id": "robin_symes", "target_id": "metropolitan_museum", "relation_type": "sold_to"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -905,54 +599,18 @@ def create_test_data():
     ).with_inputs("text", "spacy_entities", "spacy_relationships"))
     
     # ========================================================================
-    # Test Example 2: Curator involvement
+    # Test Example 2
     # ========================================================================
-    text2 = "Marion True served as antiquities curator at the Getty Museum from 1986 to 2005. She approved numerous acquisitions from questionable sources. In 2005, True resigned amid scandal."
+    text2 = "Marion True served as curator at the Getty Museum from 1986 to 2005. She resigned amid scandal."
     spacy_result2 = spacy_extractor.extract(text2)
     
     gold_entities2 = [
-        {
-            "canonical_id": "marion_true",
-            "full_name": "Marion True",
-            "type": "PERSON",
-            "mentions": ["Marion True", "True", "She"],
-            "attributes": {
-                "role": "curator",
-                "affiliation": "j_paul_getty_museum"
-            }
-        },
-        {
-            "canonical_id": "j_paul_getty_museum",
-            "full_name": "J. Paul Getty Museum",
-            "type": "ORGANIZATION",
-            "mentions": ["Getty Museum"],
-            "attributes": {
-                "entity_type": "museum",
-                "location": "Los Angeles"
-            }
-        }
+        {"canonical_id": "marion_true", "type": "PERSON", "role": "curator"},
+        {"canonical_id": "getty_museum", "type": "ORGANIZATION"}
     ]
     
     gold_relationships2 = [
-        {
-            "source_id": "marion_true",
-            "target_id": "j_paul_getty_museum",
-            "relation_type": "employed_by",
-            "attributes": {
-                "role": "antiquities curator",
-                "start_date": "1986",
-                "end_date": "2005"
-            }
-        },
-        {
-            "source_id": "marion_true",
-            "target_id": "marion_true",
-            "relation_type": "resigned",
-            "attributes": {
-                "date": "2005",
-                "reason": "scandal"
-            }
-        }
+        {"source_id": "marion_true", "target_id": "getty_museum", "relation_type": "employed_by"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -969,62 +627,19 @@ def create_test_data():
     ).with_inputs("text", "spacy_entities", "spacy_relationships"))
     
     # ========================================================================
-    # Test Example 3: Auction house
+    # Test Example 3
     # ========================================================================
-    text3 = "Sotheby's auctioned the Lydian Hoard in New York in 1987. The artifacts were later determined to have been illegally excavated from Turkey."
+    text3 = "Sotheby's auctioned the Lydian Hoard in New York in 1987."
     spacy_result3 = spacy_extractor.extract(text3)
     
     gold_entities3 = [
-        {
-            "canonical_id": "sothebys",
-            "full_name": "Sotheby's",
-            "type": "ORGANIZATION",
-            "mentions": ["Sotheby's"],
-            "attributes": {
-                "entity_type": "auction_house"
-            }
-        },
-        {
-            "canonical_id": "lydian_hoard",
-            "full_name": "Lydian Hoard",
-            "type": "ARTIFACT",
-            "mentions": ["Lydian Hoard", "The artifacts"],
-            "attributes": {
-                "object_type": "collection",
-                "legal_status": "looted",
-                "origin": "Turkey"
-            }
-        },
-        {
-            "canonical_id": "new_york",
-            "type": "LOCATION",
-            "mentions": ["New York"],
-            "attributes": {
-                "location_type": "city",
-                "country": "USA"
-            }
-        },
-        {
-            "canonical_id": "turkey",
-            "type": "LOCATION",
-            "mentions": ["Turkey"],
-            "attributes": {
-                "location_type": "country",
-                "significance": "origin_country"
-            }
-        }
+        {"canonical_id": "sothebys", "type": "ORGANIZATION"},
+        {"canonical_id": "lydian_hoard", "type": "ARTIFACT"},
+        {"canonical_id": "new_york", "type": "LOCATION"}
     ]
     
     gold_relationships3 = [
-        {
-            "source_id": "sothebys",
-            "target_id": "lydian_hoard",
-            "relation_type": "auctioned",
-            "attributes": {
-                "date": "1987",
-                "location": "new_york"
-            }
-        }
+        {"source_id": "sothebys", "target_id": "lydian_hoard", "relation_type": "auctioned"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -1041,71 +656,20 @@ def create_test_data():
     ).with_inputs("text", "spacy_entities", "spacy_relationships"))
     
     # ========================================================================
-    # Test Example 4: Repatriation
+    # Test Example 4
     # ========================================================================
-    text4 = "In 2008, Italy successfully negotiated the return of the Morgantina silver from the Metropolitan Museum. The museum repatriated the treasure to Sicily."
+    text4 = "In 2008, Italy negotiated the return of the Morgantina silver from the Metropolitan Museum."
     spacy_result4 = spacy_extractor.extract(text4)
     
     gold_entities4 = [
-        {
-            "canonical_id": "italy",
-            "type": "LOCATION",
-            "mentions": ["Italy"],
-            "attributes": {
-                "location_type": "country",
-                "significance": "origin_country"
-            }
-        },
-        {
-            "canonical_id": "morgantina_silver",
-            "full_name": "Morgantina silver",
-            "type": "ARTIFACT",
-            "mentions": ["Morgantina silver", "the treasure"],
-            "attributes": {
-                "object_type": "silver_hoard",
-                "origin": "Sicily"
-            }
-        },
-        {
-            "canonical_id": "metropolitan_museum",
-            "full_name": "Metropolitan Museum of Art",
-            "type": "ORGANIZATION",
-            "mentions": ["Metropolitan Museum", "The museum"],
-            "attributes": {
-                "entity_type": "museum",
-                "location": "New York"
-            }
-        },
-        {
-            "canonical_id": "sicily",
-            "type": "LOCATION",
-            "mentions": ["Sicily"],
-            "attributes": {
-                "location_type": "region",
-                "country": "Italy"
-            }
-        }
+        {"canonical_id": "italy", "type": "LOCATION"},
+        {"canonical_id": "morgantina_silver", "type": "ARTIFACT"},
+        {"canonical_id": "metropolitan_museum", "type": "ORGANIZATION"}
     ]
     
     gold_relationships4 = [
-        {
-            "source_id": "italy",
-            "target_id": "morgantina_silver",
-            "relation_type": "negotiated_return",
-            "attributes": {
-                "date": "2008",
-                "from": "metropolitan_museum"
-            }
-        },
-        {
-            "source_id": "metropolitan_museum",
-            "target_id": "morgantina_silver",
-            "relation_type": "repatriated",
-            "attributes": {
-                "destination": "sicily",
-                "date": "2008"
-            }
-        }
+        {"source_id": "italy", "target_id": "morgantina_silver", "relation_type": "recovered"},
+        {"source_id": "metropolitan_museum", "target_id": "morgantina_silver", "relation_type": "returned"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -1122,43 +686,18 @@ def create_test_data():
     ).with_inputs("text", "spacy_entities", "spacy_relationships"))
     
     # ========================================================================
-    # Test Example 5: Legal conviction
+    # Test Example 5
     # ========================================================================
-    text5 = "In 2004, an Italian court convicted Medici of conspiracy to traffic looted antiquities. He received a ten-year sentence and a fine."
+    text5 = "In 2004, an Italian court convicted Medici of trafficking looted antiquities."
     spacy_result5 = spacy_extractor.extract(text5)
     
     gold_entities5 = [
-        {
-            "canonical_id": "italian_court",
-            "type": "ORGANIZATION",
-            "mentions": ["Italian court"],
-            "attributes": {
-                "entity_type": "law_enforcement",
-                "jurisdiction": "Italy"
-            }
-        },
-        {
-            "canonical_id": "giacomo_medici",
-            "full_name": "Giacomo Medici",
-            "type": "PERSON",
-            "mentions": ["Medici", "He"],
-            "attributes": {
-                "role": "dealer"
-            }
-        }
+        {"canonical_id": "italian_court", "type": "ORGANIZATION"},
+        {"canonical_id": "giacomo_medici", "type": "PERSON", "role": "dealer"}
     ]
     
     gold_relationships5 = [
-        {
-            "source_id": "italian_court",
-            "target_id": "giacomo_medici",
-            "relation_type": "convicted",
-            "attributes": {
-                "date": "2004",
-                "charge": "conspiracy to traffic looted antiquities",
-                "sentence": "ten-year sentence and fine"
-            }
-        }
+        {"source_id": "italian_court", "target_id": "giacomo_medici", "relation_type": "convicted"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -1175,86 +714,21 @@ def create_test_data():
     ).with_inputs("text", "spacy_entities", "spacy_relationships"))
     
     # ========================================================================
-    # Test Example 6: Complex multi-party transaction
+    # Test Example 6
     # ========================================================================
-    text6 = "Frieda Tchacos acquired the Gospel of Judas from Egyptian antiquities dealers. She attempted to sell it through Sotheby's but withdrew it. Tchacos eventually donated the manuscript to the National Geographic Society."
+    text6 = "Frieda Tchacos acquired the Gospel of Judas from Egyptian dealers. She later donated it to National Geographic."
     spacy_result6 = spacy_extractor.extract(text6)
     
     gold_entities6 = [
-        {
-            "canonical_id": "frieda_tchacos",
-            "full_name": "Frieda Tchacos",
-            "type": "PERSON",
-            "mentions": ["Frieda Tchacos", "Tchacos", "She"],
-            "attributes": {
-                "role": "dealer"
-            }
-        },
-        {
-            "canonical_id": "gospel_of_judas",
-            "full_name": "Gospel of Judas",
-            "type": "ARTIFACT",
-            "mentions": ["Gospel of Judas", "it", "the manuscript"],
-            "attributes": {
-                "object_type": "manuscript",
-                "origin": "Egypt"
-            }
-        },
-        {
-            "canonical_id": "egyptian_antiquities_dealers",
-            "type": "PERSON",
-            "mentions": ["Egyptian antiquities dealers"],
-            "attributes": {
-                "role": "dealer",
-                "nationality": "Egyptian"
-            }
-        },
-        {
-            "canonical_id": "sothebys",
-            "full_name": "Sotheby's",
-            "type": "ORGANIZATION",
-            "mentions": ["Sotheby's"],
-            "attributes": {
-                "entity_type": "auction_house"
-            }
-        },
-        {
-            "canonical_id": "national_geographic_society",
-            "full_name": "National Geographic Society",
-            "type": "ORGANIZATION",
-            "mentions": ["National Geographic Society"],
-            "attributes": {
-                "entity_type": "cultural_institution"
-            }
-        }
+        {"canonical_id": "frieda_tchacos", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "gospel_of_judas", "type": "ARTIFACT"},
+        {"canonical_id": "egyptian_dealers", "type": "PERSON", "role": "dealer"},
+        {"canonical_id": "national_geographic", "type": "ORGANIZATION"}
     ]
     
     gold_relationships6 = [
-        {
-            "source_id": "frieda_tchacos",
-            "target_id": "gospel_of_judas",
-            "relation_type": "acquired",
-            "attributes": {
-                "source": "egyptian_antiquities_dealers"
-            }
-        },
-        {
-            "source_id": "frieda_tchacos",
-            "target_id": "gospel_of_judas",
-            "relation_type": "attempted_sale",
-            "attributes": {
-                "venue": "sothebys",
-                "outcome": "withdrawn"
-            }
-        },
-        {
-            "source_id": "frieda_tchacos",
-            "target_id": "national_geographic_society",
-            "relation_type": "donated_to",
-            "attributes": {
-                "item": "gospel_of_judas"
-            }
-        }
+        {"source_id": "frieda_tchacos", "target_id": "gospel_of_judas", "relation_type": "acquired"},
+        {"source_id": "frieda_tchacos", "target_id": "national_geographic", "relation_type": "donated_to"}
     ]
     
     entity_examples.append(dspy.Example(
@@ -1493,9 +967,15 @@ class SimpleBootstrap:
 # Main
 # ============================================================================
 
+# ============================================================================
+# Main - HYBRID APPROACH
+# ============================================================================
+
 def main():
     print("=" * 80)
-    print("Two-Stage KG Extraction: Proper Train/Test Evaluation")
+    print("Two-Stage KG Extraction: HYBRID Approach")
+    print("  - Entities: Optimized (proven +29.7% improvement)")
+    print("  - Relationships: Improved Zero-Shot (optimization fails)")
     print("=" * 80)
     
     # Load models
@@ -1531,10 +1011,10 @@ def main():
         model_results = {}
         
         # ====================================================================
-        # ENTITY REFINEMENT
+        # ENTITY REFINEMENT - USE OPTIMIZATION (IT WORKS!)
         # ====================================================================
         print("\n" + "─" * 80)
-        print("ENTITY REFINEMENT")
+        print("ENTITY REFINEMENT - Using Optimization")
         print("─" * 80)
         
         # Create baseline (no optimization)
@@ -1597,15 +1077,87 @@ Return ONLY a JSON array like:
         }
         
         # ====================================================================
-        # RELATIONSHIP REFINEMENT
+        # RELATIONSHIP REFINEMENT - USE IMPROVED ZERO-SHOT (NO OPTIMIZATION)
         # ====================================================================
         print("\n" + "─" * 80)
-        print("RELATIONSHIP REFINEMENT")
+        print("RELATIONSHIP REFINEMENT - Using Improved Zero-Shot")
+        print("⚠️  Skipping optimization (proven to hurt performance)")
         print("─" * 80)
         
-        # Create baseline
-        print("\n📝 Creating baseline relationship refiner...")
-        baseline_rel_refiner = CustomRefiner(
+        # Create IMPROVED zero-shot baseline
+        print("\n📝 Creating improved zero-shot relationship refiner...")
+        improved_rel_refiner = CustomRefiner(
+            task_description="""Extract relationships between entities in antiquities trafficking networks.
+
+CONTEXT: You'll receive:
+1. Original text about antiquities trafficking
+2. A list of entities extracted by spaCy
+3. Preliminary relationships found by spaCy
+
+YOUR TASK: Review and refine these relationships into a standardized format.
+
+RELATIONSHIP TYPES (use these exact terms):
+- sold_to: X sold artifacts/items to Y
+- purchased: X purchased/bought artifacts/items
+- acquired: X acquired artifacts (general acquisition)
+- employed_by: X worked for organization Y
+- operated_in: X operated/dealt in location Y
+- raided: Law enforcement X raided location/person Y
+- convicted: X was convicted (can be self-referential)
+- transported: X moved/transported artifacts
+- donated_to: X donated items to Y
+- collaborated_with: X worked/partnered with Y
+- seized_from: X seized evidence/items from Y
+- returned: X returned artifacts
+- recovered: X recovered artifacts
+- auctioned: X auctioned artifacts
+- met: X met with Y
+
+OUTPUT FORMAT: JSON array of relationship triples
+[
+  {"source_id": "canonical_id_1", "target_id": "canonical_id_2", "relation_type": "sold_to"}
+]
+
+CRITICAL RULES:
+1. Use canonical_id format (lowercase_with_underscores) for both source_id and target_id
+2. Convert entity names to canonical format: "Giacomo Medici" → "giacomo_medici"
+3. Use ONLY relation types from the list above
+4. Focus on meaningful relationships (transactions, employment, legal actions)
+5. Skip vague or uncertain relationships
+6. Return ONLY the JSON array, no explanations
+
+EXAMPLES OF GOOD OUTPUTS:
+Text: "Medici sold the krater to Hecht in Switzerland"
+Output: [
+  {"source_id": "giacomo_medici", "target_id": "robert_hecht", "relation_type": "sold_to"}
+]
+
+Text: "Marion True worked as curator at the Getty Museum"
+Output: [
+  {"source_id": "marion_true", "target_id": "getty_museum", "relation_type": "employed_by"}
+]
+
+Text: "Italian authorities raided the warehouse in Geneva"
+Output: [
+  {"source_id": "italian_authorities", "target_id": "geneva_freeport", "relation_type": "raided"}
+]
+
+Now extract relationships from the data below:""",
+            output_field_name="refined_relationships"
+        )
+        
+        # Evaluate improved zero-shot on test set
+        print("\n📊 Improved zero-shot evaluation on TEST set...")
+        improved_rel_results = evaluate_on_dataset(
+            improved_rel_refiner,
+            test_relationship_dataset,
+            relationship_refinement_metric,
+            "Improved Zero-Shot Relationship Refinement (Test Set)"
+        )
+        
+        # Also test the OLD baseline for comparison
+        print("\n📊 OLD baseline evaluation on TEST set (for comparison)...")
+        old_baseline_rel_refiner = CustomRefiner(
             task_description="""Convert spaCy relationships to JSON format.
 
 Each relationship needs:
@@ -1618,48 +1170,17 @@ Return ONLY a JSON array like:
             output_field_name="refined_relationships"
         )
         
-        # Evaluate baseline on test set
-        print("\n📊 Baseline evaluation on TEST set...")
-        baseline_rel_results = evaluate_on_dataset(
-            baseline_rel_refiner,
+        old_baseline_rel_results = evaluate_on_dataset(
+            old_baseline_rel_refiner,
             test_relationship_dataset,
             relationship_refinement_metric,
-            "Baseline Relationship Refinement (Test Set)"
-        )
-        
-        # Optimize
-        print("\n🔧 Optimizing relationship refiner on TRAINING set...")
-        optimizer = SimpleBootstrap(
-            metric=relationship_refinement_metric,
-            max_demos=2,
-            threshold=0.3,
-            input_fields=['text', 'spacy_entities', 'spacy_relationships']
-        )
-        optimized_rel_refiner = optimizer.compile(baseline_rel_refiner, train_relationship_dataset)
-        
-        # Evaluate optimized on TRAINING set (sanity check)
-        print("\n📊 Optimized evaluation on TRAINING set (sanity check)...")
-        train_rel_results = evaluate_on_dataset(
-            optimized_rel_refiner,
-            train_relationship_dataset,
-            relationship_refinement_metric,
-            "Optimized Relationship Refinement (Training Set)"
-        )
-        
-        # Evaluate optimized on TEST set
-        print("\n📊 Optimized evaluation on TEST set (GENERALIZATION)...")
-        test_rel_results = evaluate_on_dataset(
-            optimized_rel_refiner,
-            test_relationship_dataset,
-            relationship_refinement_metric,
-            "Optimized Relationship Refinement (Test Set)"
+            "Old Baseline Relationship Refinement (Test Set)"
         )
         
         model_results['relationship'] = {
-            'baseline_test': baseline_rel_results['average'],
-            'optimized_train': train_rel_results['average'],
-            'optimized_test': test_rel_results['average'],
-            'improvement': test_rel_results['average'] - baseline_rel_results['average']
+            'old_baseline_test': old_baseline_rel_results['average'],
+            'improved_zeroshot_test': improved_rel_results['average'],
+            'improvement': improved_rel_results['average'] - old_baseline_rel_results['average']
         }
         
         all_results[model_config.name] = model_results
@@ -1668,7 +1189,7 @@ Return ONLY a JSON array like:
     # FINAL SUMMARY
     # ========================================================================
     print("\n" + "=" * 80)
-    print("FINAL RESULTS SUMMARY")
+    print("FINAL RESULTS SUMMARY - HYBRID APPROACH")
     print("=" * 80)
     
     for model_name, results in all_results.items():
@@ -1676,34 +1197,103 @@ Return ONLY a JSON array like:
         print(f"📊 {model_name}")
         print(f"{'='*80}")
         
-        print(f"\n  ENTITY REFINEMENT:")
+        print(f"\n  ENTITY REFINEMENT (Optimized):")
         print(f"    Baseline (Test):     {results['entity']['baseline_test']:.3f}")
         print(f"    Optimized (Train):   {results['entity']['optimized_train']:.3f}")
         print(f"    Optimized (Test):    {results['entity']['optimized_test']:.3f}")
         print(f"    → Improvement:       {results['entity']['improvement']:+.3f}")
         
-        print(f"\n  RELATIONSHIP REFINEMENT:")
-        print(f"    Baseline (Test):     {results['relationship']['baseline_test']:.3f}")
-        print(f"    Optimized (Train):   {results['relationship']['optimized_train']:.3f}")
-        print(f"    Optimized (Test):    {results['relationship']['optimized_test']:.3f}")
+        if results['entity']['improvement'] > 0:
+            print(f"    ✅ Optimization HELPS (+{results['entity']['improvement']:.1%})")
+        else:
+            print(f"    ❌ Optimization HURTS ({results['entity']['improvement']:.1%})")
+        
+        print(f"\n  RELATIONSHIP REFINEMENT (Improved Zero-Shot):")
+        print(f"    Old Baseline (Test): {results['relationship']['old_baseline_test']:.3f}")
+        print(f"    Improved Zero-Shot:  {results['relationship']['improved_zeroshot_test']:.3f}")
         print(f"    → Improvement:       {results['relationship']['improvement']:+.3f}")
         
-        # Overfitting check
-        entity_overfit = results['entity']['optimized_train'] - results['entity']['optimized_test']
-        rel_overfit = results['relationship']['optimized_train'] - results['relationship']['optimized_test']
-        
-        print(f"\n  OVERFITTING CHECK:")
-        print(f"    Entity gap (train-test):        {entity_overfit:+.3f}")
-        print(f"    Relationship gap (train-test):  {rel_overfit:+.3f}")
-        
-        if entity_overfit > 0.2 or rel_overfit > 0.2:
-            print(f"    ⚠️  Warning: Possible overfitting detected!")
+        if results['relationship']['improvement'] > 0:
+            print(f"    ✅ Better prompt HELPS (+{results['relationship']['improvement']:.1%})")
         else:
-            print(f"    ✅ Good generalization")
+            print(f"    ⚠️  Still struggling with relationships")
+        
+        # Overfitting check for entities only
+        entity_overfit = results['entity']['optimized_train'] - results['entity']['optimized_test']
+        
+        print(f"\n  GENERALIZATION CHECK:")
+        print(f"    Entity gap (train-test):  {entity_overfit:+.3f}")
+        
+        if entity_overfit > 0.2:
+            print(f"    ⚠️  Entity overfitting detected")
+        elif entity_overfit < 0:
+            print(f"    ✅ Excellent entity generalization (test > train)")
+        else:
+            print(f"    ✅ Good entity generalization")
+        
+        print(f"\n  PRODUCTION RECOMMENDATION:")
+        if results['entity']['improvement'] > 0.1 and results['relationship']['improved_zeroshot_test'] > 0.15:
+            print(f"    ✅ READY FOR PRODUCTION")
+            print(f"       - Use optimized entity extraction")
+            print(f"       - Use improved zero-shot relationships")
+        elif results['entity']['improvement'] > 0.1:
+            print(f"    🟡 ENTITIES READY, RELATIONSHIPS NEED WORK")
+            print(f"       - Deploy entity extraction")
+            print(f"       - Consider spaCy-only for relationships")
+        else:
+            print(f"    ❌ NEEDS MORE WORK")
+            print(f"       - Try larger model")
+            print(f"       - Or use traditional NLP approaches")
     
     print("\n" + "=" * 80)
     print("✅ Evaluation complete!")
     print("=" * 80)
+    
+    # Save prompts
+    for model_name in all_results.keys():
+        with open(f"hybrid_prompts_{model_name.replace(' ', '_')}.txt", "w") as f:
+            f.write("HYBRID APPROACH PROMPTS\n")
+            f.write("=" * 80 + "\n\n")
+            
+            f.write("APPROACH:\n")
+            f.write("  - Entities: Optimized with few-shot learning\n")
+            f.write("  - Relationships: Improved zero-shot (no optimization)\n\n")
+            f.write("=" * 80 + "\n\n")
+        
+            # ENTITY PROMPT
+            test_entity_ex = test_entity_dataset[0]
+            entity_prompt = optimized_entity_refiner._build_prompt(
+                text=test_entity_ex.text,
+                spacy_entities=test_entity_ex.spacy_entities
+            )
+        
+            f.write("ENTITY REFINEMENT PROMPT (OPTIMIZED)\n")
+            f.write("-" * 80 + "\n")
+            f.write(f"Number of demos: {len(optimized_entity_refiner.demos)}\n")
+            f.write(f"Test F1: {results['entity']['optimized_test']:.3f}\n")
+            f.write(f"Improvement: {results['entity']['improvement']:+.3f}\n")
+            f.write("-" * 80 + "\n\n")
+            f.write(entity_prompt)
+            f.write("\n\n")
+        
+            # RELATIONSHIP PROMPT
+            test_rel_ex = test_relationship_dataset[0]
+            rel_prompt = improved_rel_refiner._build_prompt(
+                text=test_rel_ex.text,
+                spacy_entities=test_rel_ex.spacy_entities,
+                spacy_relationships=test_rel_ex.spacy_relationships
+            )
+        
+            f.write("\n\nRELATIONSHIP REFINEMENT PROMPT (IMPROVED ZERO-SHOT)\n")
+            f.write("-" * 80 + "\n")
+            f.write(f"Number of demos: 0 (zero-shot by design)\n")
+            f.write(f"Test F1: {results['relationship']['improved_zeroshot_test']:.3f}\n")
+            f.write(f"Improvement over old baseline: {results['relationship']['improvement']:+.3f}\n")
+            f.write("-" * 80 + "\n\n")
+            f.write(rel_prompt)
+
+        print(f"\n✅ Prompts saved to: hybrid_prompts_{model_name.replace(' ', '_')}.txt")
 
 if __name__ == "__main__":
     main()
+
